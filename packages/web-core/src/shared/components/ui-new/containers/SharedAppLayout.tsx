@@ -48,6 +48,12 @@ import {
 import { AppBarNotificationBellContainer } from '@/pages/workspaces/AppBarNotificationBellContainer';
 import { WorkspacesSidebarContainer } from '@/pages/workspaces/WorkspacesSidebarContainer';
 import { WorkspacesSidebarReopenTag } from '@vibe/ui/components/WorkspacesSidebar';
+import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
+import {
+  listLocalProjects,
+  createLocalProject,
+} from '@/shared/lib/local/localApi';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export function SharedAppLayout() {
   const appNavigation = useAppNavigation();
@@ -58,7 +64,9 @@ export function SharedAppLayout() {
   const isLeftSidebarVisible = useUiPreferencesStore(
     (s) => s.isLeftSidebarVisible
   );
-  const { isSignedIn } = useAuth();
+  const { isSignedIn: cloudSignedIn } = useAuth();
+  const isSignedIn = IS_LOCAL_MODE || cloudSignedIn;
+  const queryClient = useQueryClient();
   const { appVersion } = useUserSystem();
   const updateVersion = useAppUpdateStore((s) => s.updateVersion);
   const restartForUpdate = useAppUpdateStore((s) => s.restart);
@@ -117,15 +125,39 @@ export function SharedAppLayout() {
   );
   const {
     data: orgProjects = [],
-    isLoading,
+    isLoading: remoteLoading,
     updateMany: updateManyProjects,
   } = useShape(PROJECTS_SHAPE, projectParams, {
-    enabled: isSignedIn && !!selectedOrgId,
+    enabled: !IS_LOCAL_MODE && cloudSignedIn && !!selectedOrgId,
     mutation: PROJECT_MUTATION,
   });
+
+  // Local-mode project list
+  const { data: localProjectsRaw = [], isLoading: localLoading } = useQuery({
+    queryKey: ['local', 'projects'],
+    queryFn: listLocalProjects,
+    enabled: IS_LOCAL_MODE,
+  });
+  const localProjects = useMemo<RemoteProject[]>(
+    () =>
+      localProjectsRaw.map((p) => ({
+        id: p.id,
+        organization_id: 'local',
+        name: p.name,
+        color: '260 100% 60%',
+        sort_order: 0,
+        created_at: p.created_at,
+        updated_at: p.updated_at,
+      })),
+    [localProjectsRaw]
+  );
+
+  const effectiveProjects = IS_LOCAL_MODE ? localProjects : orgProjects;
+  const isLoading = IS_LOCAL_MODE ? localLoading : remoteLoading;
+
   const sortedProjects = useMemo(
-    () => sortProjectsByOrder(orgProjects),
-    [orgProjects]
+    () => sortProjectsByOrder(effectiveProjects),
+    [effectiveProjects]
   );
   const [orderedProjects, setOrderedProjects] =
     useState<RemoteProject[]>(sortedProjects);
@@ -250,6 +282,15 @@ export function SharedAppLayout() {
   }, [setSelectedOrgId]);
 
   const handleCreateProject = useCallback(async () => {
+    if (IS_LOCAL_MODE) {
+      const name = window.prompt('Project name:');
+      if (!name) return;
+      const created = await createLocalProject(name);
+      queryClient.invalidateQueries({ queryKey: ['local', 'projects'] });
+      appNavigation.goToProject(created.id);
+      return;
+    }
+
     if (!selectedOrgId) return;
 
     try {
@@ -262,7 +303,7 @@ export function SharedAppLayout() {
     } catch {
       // Dialog cancelled
     }
-  }, [selectedOrgId, appNavigation]);
+  }, [selectedOrgId, appNavigation, queryClient]);
 
   const handleSignIn = useCallback(async () => {
     try {
@@ -406,8 +447,10 @@ export function SharedAppLayout() {
             {/* Header: org name + close button */}
             <div className="flex items-center justify-between p-4 border-b border-border">
               <span className="text-sm font-medium text-high truncate">
-                {organizations.find((o) => o.id === selectedOrgId)?.name ??
-                  'Organization'}
+                {IS_LOCAL_MODE
+                  ? 'Local Projects'
+                  : (organizations.find((o) => o.id === selectedOrgId)?.name ??
+                    'Organization')}
               </span>
               <button
                 type="button"

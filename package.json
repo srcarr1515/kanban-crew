@@ -49,7 +49,9 @@
     "remote:prepare-db:check": "cd crates/remote && bash scripts/prepare-db.sh --check",
     "tauri:dev": "set -a && [ -f .env ] && . ./.env && set +a && export FRONTEND_PORT=$(node scripts/setup-dev-environment.js frontend) && export BACKEND_PORT=$(node scripts/setup-dev-environment.js backend) && export VK_ALLOWED_ORIGINS=\"http://localhost:${FRONTEND_PORT}\" && export DISABLE_WORKTREE_CLEANUP=1 && export RUST_LOG=debug && export VITE_VK_SHARED_API_BASE=${VK_SHARED_API_BASE:-} && cd crates/tauri-app && cargo tauri dev",
     "tauri:build": "cd crates/tauri-app && cargo tauri build",
-    "db:reset": "rm -f dev_assets/db.sqlite dev_assets/db.v2.sqlite"
+    "db:reset": "rm -f dev_assets/db.sqlite dev_assets/db.v2.sqlite",
+    "dev:stop": "node scripts/dev-stop.js",
+    "dev:stop:backend": "node scripts/dev-stop.js backend"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",

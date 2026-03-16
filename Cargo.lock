@@ -7002,6 +7002,7 @@ version = "0.1.30"
 dependencies = [
  "anyhow",
  "api-types",
+ "async-stream",
  "axum",
  "base64 0.22.1",
  "bytes",

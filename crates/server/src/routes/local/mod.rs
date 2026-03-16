@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
 
+pub mod chat;
+
 // ── Response types ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
@@ -80,6 +82,7 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/local/tasks/bulk-update", post(bulk_update_tasks))
         .route("/local/tasks/{id}", patch(update_task))
         .route("/local/tasks/{id}", delete(delete_task))
+        .merge(chat::router())
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────

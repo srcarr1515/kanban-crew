@@ -1,0 +1,207 @@
+---
+title: "AI Chat (Local)"
+description: "Architecture and developer guide for the local AI chat feature that uses Claude Code CLI"
+sidebarTitle: "AI Chat"
+---
+
+The AI Chat feature is a self-contained, local-only chat panel embedded in the Kanban board. It lets users brainstorm ideas, discuss implementation strategies, and generate task proposals — all powered by Claude Code CLI with zero cloud dependencies.
+
+## Architecture Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│  Frontend (React)                                           │
+│                                                             │
+│  ChatPanel ─► chatApi.ts ─► localApiTransport ─► fetch()    │
+│       │                                                     │
+│  useChatStore (Zustand)    React Query (threads/messages)   │
+└──────────────────────────────┬──────────────────────────────┘
+                               │ HTTP + SSE
+┌──────────────────────────────▼──────────────────────────────┐
+│  Backend (Rust / Axum)                                      │
+│                                                             │
+│  /api/local/chat/*  ─► SQLite (threads + messages)          │
+│                     ─► Claude Code CLI (stdin/stdout)       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Data Model
+
+Two tables in SQLite, added by migration `20260316100000_add_chat_threads_and_messages.sql`:
+
+| Table | Key Columns | Notes |
+|-------|-------------|-------|
+| `chat_threads` | `id` (TEXT PK), `project_id` (BLOB FK → projects), `title`, `issue_id` | `project_id` is BLOB to match the existing `projects.id` column type |
+| `chat_messages` | `id` (TEXT PK), `thread_id` (TEXT FK → chat_threads), `role`, `content`, `metadata` | `role` is constrained to `user`, `assistant`, `system` |
+
+<Warning>
+`project_id` must be `BLOB`, not `TEXT`. The `projects` table stores UUIDs as BLOBs. A type mismatch causes silent FK constraint failures (SQLite error 787).
+</Warning>
+
+## API Endpoints
+
+All routes are under `/api/local/chat/`:
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/threads?project_id=<uuid>` | List all threads for a project |
+| `POST` | `/threads` | Create a new thread (`{ project_id, title?, issue_id? }`) |
+| `DELETE` | `/threads/{id}` | Delete a thread and its messages (cascade) |
+| `POST` | `/threads/{id}/title` | Update thread title (`{ title }`) |
+| `GET` | `/messages?thread_id=<id>` | List messages for a thread |
+| `POST` | `/completions` | Send a message and stream the AI response (SSE) |
+
+### Completions endpoint (`POST /completions`)
+
+This is the core endpoint. It:
+
+1. Persists the user message to the database
+2. Builds a conversation prompt from the system prompt + message history
+3. Spawns Claude Code CLI (or calls the Anthropic API)
+4. Streams the response back as **Server-Sent Events**
+5. Persists the complete assistant message after the stream ends
+
+**SSE event format:**
+```json
+{"type": "content_block_delta", "delta": {"text": "chunk of text"}}
+```
+
+## Claude Code CLI Integration
+
+### How it spawns
+
+The backend resolves the CLI executable using `utils::shell::resolve_executable_path()` — the same function used by the task executor system. This handles Windows `.cmd` file resolution and PATH refresh from the registry.
+
+```
+Default command:  npx -y @anthropic-ai/claude-code
+Override via:     CLAUDE_CLI_CMD environment variable
+```
+
+**Flags passed to the CLI:**
+- `--output-format=stream-json` — emit structured JSON events on stdout
+- `--verbose` — include detailed event types
+- `--dangerously-skip-permissions` — non-interactive mode (no approval prompts)
+
+### stdin prompt delivery
+
+The prompt is piped via **stdin**, not passed as a `-p` argument. This is critical on Windows where `.cmd` batch files corrupt arguments containing quotes, newlines, or special characters. When no `-p` flag is present, Claude Code CLI reads from stdin automatically.
+
+```rust
+// Pseudocode — see chat.rs for the real implementation
+let mut child = Command::new(resolved_npx_path)
+    .args(["–y", "@anthropic-ai/claude-code", ...flags])
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .spawn()?;
+
+child.stdin.write_all(prompt.as_bytes());
+drop(child.stdin); // Close stdin to signal EOF
+```
+
+### CLI output parsing
+
+The CLI emits newline-delimited JSON. The backend looks for three event types:
+
+| Event type | When it appears | What we extract |
+|------------|-----------------|-----------------|
+| `assistant` | Start of response | `message.content[].text` (initial text block) |
+| `content_block_delta` | During streaming | `delta.text` (incremental chunks) |
+| `result` | End of response | `result` (fallback if no streaming occurred) |
+
+### Dual backend support
+
+The backend supports two modes, controlled by the `CHAT_BACKEND` environment variable:
+
+| Value | Backend | Requirements |
+|-------|---------|--------------|
+| *(default / anything)* | Claude Code CLI | `npx` on PATH (or `CLAUDE_CLI_CMD` set) |
+| `anthropic-api` | Anthropic HTTP API | `ANTHROPIC_API_KEY` env var |
+
+## Frontend Components
+
+All frontend code lives in `packages/web-core/src/features/ai-chat/`:
+
+### File map
+
+| File | Purpose |
+|------|---------|
+| `ui/ChatPanel.tsx` | Main panel — thread tabs, message list, input area |
+| `ui/ChatMessage.tsx` | `ChatMessageBubble` (renders a message) and `StreamingMessage` (live typing indicator) |
+| `ui/ProposalCard.tsx` | Renders structured ticket proposals from assistant messages |
+| `ui/useChatStore.ts` | Zustand store — `isOpen`, `activeThreadId`, `toggle()`, `open()`, `close()`, `setActiveThread()` |
+
+### API client
+
+`packages/web-core/src/shared/lib/local/chatApi.ts` provides typed functions:
+
+| Function | Description |
+|----------|-------------|
+| `listChatThreads(projectId)` | Fetch all threads |
+| `createChatThread({ project_id, ... })` | Create a thread |
+| `deleteChatThread(id)` | Delete a thread |
+| `updateChatThreadTitle(id, title)` | Rename a thread |
+| `listChatMessages(threadId)` | Fetch messages |
+| `streamChatCompletion(threadId, content)` | Returns an `AsyncGenerator<string>` that yields text chunks from the SSE stream |
+| `extractProposals(content)` | Regex extraction of ` ```proposal ` JSON blocks from message content |
+
+### How the panel mounts
+
+The chat panel is mounted in `pages/kanban/ProjectKanban.tsx`:
+
+- A **floating toggle button** (bottom-right corner) is visible only in `IS_LOCAL_MODE`
+- On desktop: the panel renders as a `420×600px` floating card
+- On mobile: it renders as a fullscreen overlay
+
+### Optimistic UI
+
+When the user sends a message:
+1. The input clears immediately
+2. An **optimistic user bubble** appears instantly (before the server round-trip)
+3. A "Thinking..." streaming indicator appears below
+4. As chunks arrive, the streaming message updates in real-time
+5. When the stream ends, optimistic state clears and the real persisted messages are fetched
+
+### Proposal cards
+
+When Claude's response contains a fenced code block tagged ` ```proposal `, the `ProposalCard` component renders it as a list of ticket cards with a "Confirm & Create Tickets" button that calls the task creation API.
+
+**Proposal format expected from the AI:**
+````
+```proposal
+[
+  { "title": "Implement auth middleware", "description": "...", "status": "backlog" },
+  { "title": "Add rate limiting", "description": "...", "status": "backlog" }
+]
+```
+````
+
+## System Prompt
+
+The system prompt (defined in `chat.rs`) instructs the AI to act as a project planning assistant and respond with structured ` ```proposal ` blocks when asked to create tickets. This keeps the AI focused on Kanban-relevant tasks.
+
+## Local-only gating
+
+The chat feature is gated behind `IS_LOCAL_MODE`, which is `true` when the `VITE_VK_SHARED_API_BASE` env var is empty or unset. This ensures the chat button and panel never appear in cloud/shared deployments.
+
+## Development notes
+
+### Rebuilding after changes
+
+- **Frontend changes**: Hot-reloaded by Vite automatically
+- **Backend changes** (`chat.rs`): Requires recompilation. If using `cargo-watch`, it rebuilds on save. Otherwise run `pnpm dev:stop:backend` and restart
+- **Migration changes**: Requires both a DB reset (`rm` the SQLite file) and server recompilation, because `sqlx::migrate!()` embeds migrations at compile time
+
+### Useful scripts
+
+| Script | What it does |
+|--------|-------------|
+| `pnpm dev` | Start both frontend + backend with coordinated ports |
+| `pnpm dev:stop` | Kill all dev processes (frontend + backend) |
+| `pnpm dev:stop:backend` | Kill only the Rust backend processes |
+
+### Key gotchas
+
+1. **BLOB FK mismatch**: The `projects.id` column is `BLOB`. Any table referencing it must also use `BLOB`, not `TEXT`
+2. **Windows `.cmd` argument escaping**: Never pass user-generated text as CLI arguments on Windows — always use stdin
+3. **Port coordination**: `pnpm dev` sets `FRONTEND_PORT`, `BACKEND_PORT`, and `VK_ALLOWED_ORIGINS`. Running frontend and backend separately requires manually exporting these
+4. **`resolve_executable_path`**: Always use this (from `crates/utils/src/shell.rs`) to find executables — it handles Windows PATH quirks and `.cmd` extension resolution

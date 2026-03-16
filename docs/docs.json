@@ -25,6 +25,7 @@
         "pages": [
           "index",
           "getting-started",
+          "ai-chat",
           "browser-testing",
           "issue-management",
           "reviewing-code",

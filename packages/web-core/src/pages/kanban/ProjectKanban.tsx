@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Group, Layout, Panel, Separator } from 'react-resizable-panels';
+import { ChatTeardropDotsIcon } from '@phosphor-icons/react';
 import { OrgProvider } from '@/shared/providers/remote/OrgProvider';
 import { useOrgContext } from '@/shared/hooks/useOrgContext';
 import { ProjectProvider } from '@/shared/providers/remote/ProjectProvider';
 import { LocalOrgProvider } from '@/shared/providers/local/LocalOrgProvider';
 import { LocalProjectProvider } from '@/shared/providers/local/LocalProjectProvider';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
+import { ChatPanel } from '@/features/ai-chat/ui/ChatPanel';
+import { useChatStore } from '@/features/ai-chat/ui/useChatStore';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useActions } from '@/shared/hooks/useActions';
 import { usePageTitle } from '@/shared/hooks/usePageTitle';
@@ -95,6 +98,24 @@ function ProjectMutationsRegistration({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+function ChatToggleButton() {
+  const { toggle, isOpen } = useChatStore();
+  return (
+    <button
+      type="button"
+      onClick={toggle}
+      className={`fixed bottom-4 right-4 z-40 flex items-center justify-center size-12 rounded-full shadow-lg transition-colors ${
+        isOpen
+          ? 'bg-brand text-white'
+          : 'bg-secondary text-normal hover:bg-panel border border-border'
+      }`}
+      title="AI Chat"
+    >
+      <ChatTeardropDotsIcon className="size-6" weight="fill" />
+    </button>
+  );
+}
+
 function ProjectKanbanLayout({ projectName }: { projectName: string }) {
   const { issueId, isPanelOpen } = useCurrentKanbanRouteState();
   const isMobile = useIsMobile();
@@ -105,18 +126,29 @@ function ProjectKanbanLayout({ projectName }: { projectName: string }) {
     PERSIST_KEYS.kanbanLeftPanel,
     75
   );
+  const isChatOpen = useChatStore((s) => s.isOpen);
 
   const isRightPanelOpen = isPanelOpen;
 
   if (isMobile) {
-    return isRightPanelOpen ? (
-      <div className="h-full w-full overflow-hidden bg-secondary">
-        <ProjectRightSidebarContainer />
-      </div>
-    ) : (
-      <div className="h-full w-full overflow-hidden bg-primary">
-        <KanbanContainer />
-      </div>
+    return (
+      <>
+        {isRightPanelOpen ? (
+          <div className="h-full w-full overflow-hidden bg-secondary">
+            <ProjectRightSidebarContainer />
+          </div>
+        ) : (
+          <div className="h-full w-full overflow-hidden bg-primary">
+            <KanbanContainer />
+          </div>
+        )}
+        {IS_LOCAL_MODE && <ChatToggleButton />}
+        {IS_LOCAL_MODE && isChatOpen && (
+          <div className="fixed inset-0 z-50 bg-primary">
+            <ChatPanel />
+          </div>
+        )}
+      </>
     );
   }
 
@@ -135,38 +167,46 @@ function ProjectKanbanLayout({ projectName }: { projectName: string }) {
   };
 
   return (
-    <Group
-      orientation="horizontal"
-      className="flex-1 min-w-0 h-full"
-      defaultLayout={kanbanDefaultLayout}
-      onLayoutChange={onKanbanLayoutChange}
-    >
-      <Panel
-        id="kanban-left"
-        minSize="20%"
-        className="min-w-0 h-full overflow-hidden bg-primary"
+    <>
+      <Group
+        orientation="horizontal"
+        className="flex-1 min-w-0 h-full"
+        defaultLayout={kanbanDefaultLayout}
+        onLayoutChange={onKanbanLayoutChange}
       >
-        <KanbanContainer />
-      </Panel>
-
-      {isRightPanelOpen && (
-        <Separator
-          id="kanban-separator"
-          className="w-1 bg-panel outline-none hover:bg-brand/50 transition-colors cursor-col-resize"
-        />
-      )}
-
-      {isRightPanelOpen && (
         <Panel
-          id="kanban-right"
-          minSize="400px"
-          maxSize="800px"
-          className="min-w-0 h-full overflow-hidden bg-secondary"
+          id="kanban-left"
+          minSize="20%"
+          className="min-w-0 h-full overflow-hidden bg-primary"
         >
-          <ProjectRightSidebarContainer />
+          <KanbanContainer />
         </Panel>
+
+        {isRightPanelOpen && (
+          <Separator
+            id="kanban-separator"
+            className="w-1 bg-panel outline-none hover:bg-brand/50 transition-colors cursor-col-resize"
+          />
+        )}
+
+        {isRightPanelOpen && (
+          <Panel
+            id="kanban-right"
+            minSize="400px"
+            maxSize="800px"
+            className="min-w-0 h-full overflow-hidden bg-secondary"
+          >
+            <ProjectRightSidebarContainer />
+          </Panel>
+        )}
+      </Group>
+      {IS_LOCAL_MODE && <ChatToggleButton />}
+      {IS_LOCAL_MODE && isChatOpen && (
+        <div className="fixed bottom-20 right-4 z-50 w-[420px] h-[600px] max-h-[calc(100vh-8rem)] rounded-xl border border-border bg-primary shadow-2xl overflow-hidden flex flex-col">
+          <ChatPanel />
+        </div>
       )}
-    </Group>
+    </>
   );
 }
 
