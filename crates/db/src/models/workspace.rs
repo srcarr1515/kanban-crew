@@ -429,6 +429,49 @@ impl Workspace {
         Ok(())
     }
 
+    /// Link a workspace to a task by setting task_id.
+    pub async fn link_to_task(
+        pool: &SqlitePool,
+        workspace_id: Uuid,
+        task_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE workspaces SET task_id = ?, updated_at = datetime('now', 'subsec') WHERE id = ?")
+            .bind(task_id)
+            .bind(workspace_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Unlink a workspace from its task by clearing task_id.
+    pub async fn unlink_from_task(
+        pool: &SqlitePool,
+        workspace_id: Uuid,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query("UPDATE workspaces SET task_id = NULL, updated_at = datetime('now', 'subsec') WHERE id = ?")
+            .bind(workspace_id)
+            .execute(pool)
+            .await?;
+        Ok(())
+    }
+
+    /// Find all workspaces linked to a specific task.
+    pub async fn find_by_task_id(
+        pool: &SqlitePool,
+        task_id: Uuid,
+    ) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as::<_, Workspace>(
+            r#"SELECT id, task_id, container_ref, branch, setup_completed_at,
+                      created_at, updated_at, archived, pinned, name, worktree_deleted
+               FROM   workspaces
+               WHERE  task_id = ?
+               ORDER BY created_at DESC"#,
+        )
+        .bind(task_id)
+        .fetch_all(pool)
+        .await
+    }
+
     /// Update workspace fields. Only non-None values will be updated.
     /// For `name`, pass `Some("")` to clear the name, `Some("foo")` to set it, or `None` to leave unchanged.
     pub async fn update(

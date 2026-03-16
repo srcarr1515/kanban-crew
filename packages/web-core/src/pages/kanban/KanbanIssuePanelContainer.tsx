@@ -20,6 +20,8 @@ import { IssueCommentsSectionContainer } from './IssueCommentsSectionContainer';
 import { IssueSubIssuesSectionContainer } from './IssueSubIssuesSectionContainer';
 import { IssueRelationshipsSectionContainer } from './IssueRelationshipsSectionContainer';
 import { IssueWorkspacesSectionContainer } from './IssueWorkspacesSectionContainer';
+import { LocalIssueWorkspacesSectionContainer } from './LocalIssueWorkspacesSectionContainer';
+import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import {
   KanbanIssuePanel,
   type IssueFormData,
@@ -937,9 +939,13 @@ export function KanbanIssuePanelContainer({
       isUploading={isUploading}
       attachmentError={uploadError}
       onDismissAttachmentError={clearUploadError}
-      renderWorkspacesSection={(issueId) => (
-        <IssueWorkspacesSectionContainer issueId={issueId} />
-      )}
+      renderWorkspacesSection={(issueId) =>
+        IS_LOCAL_MODE ? (
+          <LocalIssueWorkspacesSectionContainer issueId={issueId} />
+        ) : (
+          <IssueWorkspacesSectionContainer issueId={issueId} />
+        )
+      }
       renderRelationshipsSection={(issueId) => (
         <IssueRelationshipsSectionContainer issueId={issueId} />
       )}

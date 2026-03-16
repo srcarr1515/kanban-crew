@@ -13,7 +13,9 @@ import {
 } from '@/shared/lib/local/localApi';
 import { taskToIssue, type LocalTask } from '@/shared/lib/local/taskAdapter';
 import { getLocalStatuses } from '@/shared/lib/local/localStatuses';
-import type { Issue } from 'shared/remote-types';
+import { localWorkspaceToRemote } from '@/shared/lib/local/workspaceAdapter';
+import { workspacesApi } from '@/shared/lib/api';
+import type { Issue, Workspace as RemoteWorkspace } from 'shared/remote-types';
 import type { InsertResult, MutationResult } from '@/shared/lib/electric/types';
 import type {
   CreateIssueRequest,
@@ -47,6 +49,32 @@ export function LocalProjectProvider({
   const statuses = useMemo(
     () => getLocalStatuses(projectId),
     [projectId]
+  );
+
+  // ── Workspace data ────────────────────────────────────────────────────────
+
+  const workspacesQueryKey = useMemo(
+    () => ['local', 'workspaces', projectId],
+    [projectId],
+  );
+
+  const workspacesQuery = useQuery({
+    queryKey: workspacesQueryKey,
+    queryFn: () => workspacesApi.getAllWorkspaces(),
+    enabled: Boolean(projectId),
+  });
+
+  const taskIds = useMemo(
+    () => new Set((tasksQuery.data ?? []).map((t) => t.id)),
+    [tasksQuery.data],
+  );
+
+  const workspaces = useMemo<RemoteWorkspace[]>(
+    () =>
+      (workspacesQuery.data ?? [])
+        .filter((ws) => ws.task_id != null && taskIds.has(ws.task_id))
+        .map((ws) => localWorkspaceToRemote(ws, projectId)),
+    [workspacesQuery.data, taskIds, projectId],
   );
 
   // ── Mutations ──────────────────────────────────────────────────────────────
@@ -277,7 +305,7 @@ export function LocalProjectProvider({
       issueTags: [],
       issueRelationships: [],
       pullRequests: [],
-      workspaces: [],
+      workspaces,
 
       isLoading: tasksQuery.isLoading,
       error: null,
@@ -318,7 +346,8 @@ export function LocalProjectProvider({
       getStatus,
       getTag: () => undefined,
       getPullRequestsForIssue: () => [],
-      getWorkspacesForIssue: () => [],
+      getWorkspacesForIssue: (issueId: string) =>
+        workspaces.filter((w) => w.issue_id === issueId),
 
       // Computed maps
       issuesById,
@@ -332,6 +361,7 @@ export function LocalProjectProvider({
       projectId,
       issues,
       statuses,
+      workspaces,
       tasksQuery.isLoading,
       retry,
       insertIssue,

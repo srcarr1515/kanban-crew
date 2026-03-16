@@ -8,9 +8,9 @@ use uuid::Uuid;
 #[derive(
     Debug, Clone, Type, Serialize, Deserialize, PartialEq, TS, EnumString, Display, Default,
 )]
-#[sqlx(type_name = "task_status", rename_all = "lowercase")]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
+#[sqlx(type_name = "task_status", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
 pub enum TaskStatus {
     #[default]
     Todo,

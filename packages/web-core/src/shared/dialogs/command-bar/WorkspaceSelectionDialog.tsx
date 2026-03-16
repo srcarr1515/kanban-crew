@@ -2,6 +2,7 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { create, useModal } from '@ebay/nice-modal-react';
 import { useTranslation } from 'react-i18next';
 import { GitBranchIcon, PlusIcon } from '@phosphor-icons/react';
+import { useQueryClient } from '@tanstack/react-query';
 import { defineModal } from '@/shared/lib/modals';
 import { ApiError, workspacesApi } from '@/shared/lib/api';
 import { getWorkspaceDefaults } from '@/shared/lib/workspaceDefaults';
@@ -27,6 +28,9 @@ import { ProjectProvider } from '@/shared/providers/remote/ProjectProvider';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { UserProvider } from '@/shared/providers/remote/UserProvider';
 import { useUserContext } from '@/shared/hooks/useUserContext';
+import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
+import { linkWorkspaceToTask } from '@/shared/lib/local/localApi';
+import type { Workspace as RemoteWorkspace } from 'shared/remote-types';
 
 export interface WorkspaceSelectionDialogProps {
   projectId: string;
@@ -54,32 +58,31 @@ function getLinkWorkspaceErrorMessage(error: unknown): string | null {
   return null;
 }
 
-/** Inner component that uses contexts to render the selection UI */
-function WorkspaceSelectionContent({
+/** Shared selection UI used by both local and remote content components */
+function WorkspaceSelectionUI({
   projectId,
   issueId,
+  linkedWorkspaces,
+  remoteWorkspacesForDefaults,
+  onLinkWorkspace,
 }: {
   projectId: string;
   issueId: string;
+  linkedWorkspaces: RemoteWorkspace[];
+  remoteWorkspacesForDefaults: RemoteWorkspace[];
+  onLinkWorkspace: (workspaceId: string) => Promise<void>;
 }) {
   const { t } = useTranslation('common');
   const modal = useModal();
   const { openWorkspaceCreateFromState } = useProjectWorkspaceCreateDraft();
   const previousFocusRef = useRef<HTMLElement | null>(null);
 
-  // Get local workspaces from WorkspaceContext (both active and archived)
   const { activeWorkspaces, archivedWorkspaces } = useWorkspaceContext();
-
-  // Get already-linked workspaces from UserContext (workspaces are user-scoped)
-  const { getWorkspacesForIssue, workspaces } = useUserContext();
-
-  // Get issue data from ProjectContext (issues are project-scoped)
   const { getIssue } = useProjectContext();
 
   const [search, setSearch] = useState('');
   const [isLinking, setIsLinking] = useState(false);
 
-  // Capture focus when dialog opens and reset state
   useEffect(() => {
     if (modal.visible) {
       previousFocusRef.current = document.activeElement as HTMLElement;
@@ -88,17 +91,14 @@ function WorkspaceSelectionContent({
     }
   }, [modal.visible]);
 
-  // Get IDs of workspaces already linked to this issue
   const linkedLocalWorkspaceIds = useMemo(() => {
-    const remoteWorkspaces = getWorkspacesForIssue(issueId);
     return new Set(
-      remoteWorkspaces
+      linkedWorkspaces
         .map((w) => w.local_workspace_id)
         .filter((id): id is string => id !== null)
     );
-  }, [getWorkspacesForIssue, issueId]);
+  }, [linkedWorkspaces]);
 
-  // Combine active and archived workspaces with archived flag
   const allWorkspaces = useMemo(() => {
     const active = activeWorkspaces.map((ws) => ({ ...ws, isArchived: false }));
     const archived = archivedWorkspaces.map((ws) => ({
@@ -108,15 +108,12 @@ function WorkspaceSelectionContent({
     return [...active, ...archived];
   }, [activeWorkspaces, archivedWorkspaces]);
 
-  // Filter and paginate workspaces
   const searchLower = search.toLowerCase();
   const isSearching = search.length > 0;
 
   const filteredWorkspaces = useMemo(() => {
     return allWorkspaces.filter((ws) => {
-      // Exclude already-linked workspaces
       if (linkedLocalWorkspaceIds.has(ws.id)) return false;
-      // Filter by search if searching
       if (isSearching) {
         return (
           ws.name.toLowerCase().includes(searchLower) ||
@@ -127,7 +124,6 @@ function WorkspaceSelectionContent({
     });
   }, [allWorkspaces, linkedLocalWorkspaceIds, isSearching, searchLower]);
 
-  // Apply pagination when not searching
   const displayedWorkspaces = useMemo(() => {
     return isSearching
       ? filteredWorkspaces
@@ -140,8 +136,7 @@ function WorkspaceSelectionContent({
 
       setIsLinking(true);
       try {
-        await workspacesApi.linkToIssue(workspaceId, projectId, issueId);
-        // Success - close dialog. UI will auto-update via Electric sync.
+        await onLinkWorkspace(workspaceId);
         modal.hide();
       } catch (err) {
         const errorMessage =
@@ -157,7 +152,7 @@ function WorkspaceSelectionContent({
         setIsLinking(false);
       }
     },
-    [projectId, issueId, isLinking, modal, t]
+    [isLinking, modal, t, onLinkWorkspace]
   );
 
   const handleCreateNewWorkspace = useCallback(async () => {
@@ -165,22 +160,19 @@ function WorkspaceSelectionContent({
     setIsLinking(true);
 
     try {
-      // Get issue details for initial prompt
       const issue = getIssue(issueId);
       const initialPrompt = buildWorkspaceCreatePrompt(
         issue?.title ?? null,
         issue?.description ?? null
       );
 
-      // Build set of local workspace IDs that exist on this machine
       const localWorkspaceIds = buildLocalWorkspaceIdSet(
         activeWorkspaces,
         archivedWorkspaces
       );
 
-      // Get defaults from most recent workspace
       const defaults = await getWorkspaceDefaults(
-        workspaces,
+        remoteWorkspacesForDefaults,
         localWorkspaceIds,
         projectId
       );
@@ -214,20 +206,18 @@ function WorkspaceSelectionContent({
     getIssue,
     issueId,
     projectId,
-    workspaces,
+    remoteWorkspacesForDefaults,
     isLinking,
     activeWorkspaces,
     archivedWorkspaces,
     t,
   ]);
 
-  // Restore focus when dialog closes
   const handleCloseAutoFocus = useCallback((event: Event) => {
     event.preventDefault();
     previousFocusRef.current?.focus();
   }, []);
 
-  // Prevent Radix from managing focus on open - let cmdk handle it
   const handleOpenAutoFocus = useCallback((event: Event) => {
     event.preventDefault();
   }, []);
@@ -259,7 +249,6 @@ function WorkspaceSelectionContent({
             {t('commandBar.noResults', 'No results found')}
           </CommandEmpty>
 
-          {/* Create new workspace option - stubbed */}
           <CommandGroup>
             <CommandItem
               value="__create_new__"
@@ -273,7 +262,6 @@ function WorkspaceSelectionContent({
             </CommandItem>
           </CommandGroup>
 
-          {/* Available workspaces */}
           {displayedWorkspaces.length > 0 && (
             <CommandGroup heading={t('kanban.workspaces', 'Workspaces')}>
               {displayedWorkspaces.map((workspace) => (
@@ -305,7 +293,6 @@ function WorkspaceSelectionContent({
             </CommandGroup>
           )}
 
-          {/* Show count when paginated */}
           {!isSearching && filteredWorkspaces.length > PAGE_SIZE && (
             <div className="px-base py-half text-xs text-low text-center">
               {t('kanban.showingWorkspaces', 'Showing {{count}} of {{total}}', {
@@ -320,7 +307,75 @@ function WorkspaceSelectionContent({
   );
 }
 
-/** Wrapper that provides UserContext and ProjectContext */
+/** Remote-mode content: uses UserContext for linked workspace info */
+function RemoteWorkspaceSelectionContent({
+  projectId,
+  issueId,
+}: {
+  projectId: string;
+  issueId: string;
+}) {
+  const { getWorkspacesForIssue, workspaces } = useUserContext();
+
+  const linkedWorkspaces = useMemo(
+    () => getWorkspacesForIssue(issueId),
+    [getWorkspacesForIssue, issueId]
+  );
+
+  const handleLink = useCallback(
+    (workspaceId: string) =>
+      workspacesApi.linkToIssue(workspaceId, projectId, issueId),
+    [projectId, issueId]
+  );
+
+  return (
+    <WorkspaceSelectionUI
+      projectId={projectId}
+      issueId={issueId}
+      linkedWorkspaces={linkedWorkspaces}
+      remoteWorkspacesForDefaults={workspaces}
+      onLinkWorkspace={handleLink}
+    />
+  );
+}
+
+/** Local-mode content: uses ProjectContext for linked workspace info */
+function LocalWorkspaceSelectionContent({
+  projectId,
+  issueId,
+}: {
+  projectId: string;
+  issueId: string;
+}) {
+  const { getWorkspacesForIssue } = useProjectContext();
+  const queryClient = useQueryClient();
+
+  const linkedWorkspaces = useMemo(
+    () => getWorkspacesForIssue(issueId),
+    [getWorkspacesForIssue, issueId]
+  );
+
+  const handleLink = useCallback(
+    async (workspaceId: string) => {
+      await linkWorkspaceToTask(issueId, workspaceId);
+      queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
+      queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+    },
+    [issueId, queryClient]
+  );
+
+  return (
+    <WorkspaceSelectionUI
+      projectId={projectId}
+      issueId={issueId}
+      linkedWorkspaces={linkedWorkspaces}
+      remoteWorkspacesForDefaults={[]}
+      onLinkWorkspace={handleLink}
+    />
+  );
+}
+
+/** Wrapper that provides the right context based on mode */
 function WorkspaceSelectionWithContext({
   projectId,
   issueId,
@@ -329,10 +384,22 @@ function WorkspaceSelectionWithContext({
     return null;
   }
 
+  if (IS_LOCAL_MODE) {
+    return (
+      <LocalWorkspaceSelectionContent
+        projectId={projectId}
+        issueId={issueId}
+      />
+    );
+  }
+
   return (
     <UserProvider>
       <ProjectProvider projectId={projectId}>
-        <WorkspaceSelectionContent projectId={projectId} issueId={issueId} />
+        <RemoteWorkspaceSelectionContent
+          projectId={projectId}
+          issueId={issueId}
+        />
       </ProjectProvider>
     </UserProvider>
   );

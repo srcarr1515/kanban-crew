@@ -84,6 +84,28 @@ pub async fn update_workspace(
         tracing::error!("Failed to archive workspace {}: {}", workspace.id, e);
     }
 
+    // Auto-transition: if all workspaces linked to this task are now archived, move task to 'done'
+    if is_archiving {
+        if let Some(task_id) = updated.task_id {
+            let active_count: i64 = sqlx::query_scalar(
+                r#"SELECT COUNT(*) FROM workspaces WHERE task_id = ? AND archived = 0"#,
+            )
+            .bind(task_id)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(0);
+
+            if active_count == 0 {
+                let _ = sqlx::query(
+                    "UPDATE tasks SET status = 'done', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'in_progress', 'in_review')",
+                )
+                .bind(task_id)
+                .execute(pool)
+                .await;
+            }
+        }
+    }
+
     Ok(ResponseJson(ApiResponse::success(updated)))
 }
 

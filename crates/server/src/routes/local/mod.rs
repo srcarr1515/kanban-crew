@@ -6,6 +6,7 @@ use axum::{
 };
 use chrono::{DateTime, Utc};
 use db::models::project::Project;
+use db::models::workspace::Workspace;
 use deployment::Deployment;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -82,6 +83,14 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/local/tasks/bulk-update", post(bulk_update_tasks))
         .route("/local/tasks/{id}", patch(update_task))
         .route("/local/tasks/{id}", delete(delete_task))
+        .route(
+            "/local/tasks/{task_id}/workspaces",
+            get(list_task_workspaces),
+        )
+        .route(
+            "/local/tasks/{task_id}/workspaces/{workspace_id}/link",
+            post(link_workspace_to_task).delete(unlink_workspace_from_task),
+        )
         .merge(chat::router())
 }
 
@@ -226,5 +235,45 @@ async fn bulk_update_tasks(
         .await?;
     }
 
+    Ok(ResponseJson(ApiResponse::success(())))
+}
+
+// ── Workspace-Task linking ──────────────────────────────────────────────────
+
+async fn list_task_workspaces(
+    State(deployment): State<DeploymentImpl>,
+    Path(task_id): Path<Uuid>,
+) -> Result<ResponseJson<ApiResponse<Vec<Workspace>>>, ApiError> {
+    let pool = &deployment.db().pool;
+    let workspaces = Workspace::find_by_task_id(pool, task_id).await?;
+    Ok(ResponseJson(ApiResponse::success(workspaces)))
+}
+
+async fn link_workspace_to_task(
+    State(deployment): State<DeploymentImpl>,
+    Path((task_id, workspace_id)): Path<(Uuid, Uuid)>,
+) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let pool = &deployment.db().pool;
+
+    // Link the workspace to the task
+    Workspace::link_to_task(pool, workspace_id, task_id).await?;
+
+    // Auto-transition: if task is in 'todo', move it to 'in_progress'
+    sqlx::query(
+        "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now', 'subsec') WHERE id = ? AND status = 'todo'",
+    )
+    .bind(task_id)
+    .execute(pool)
+    .await?;
+
+    Ok(ResponseJson(ApiResponse::success(())))
+}
+
+async fn unlink_workspace_from_task(
+    State(deployment): State<DeploymentImpl>,
+    Path((_task_id, workspace_id)): Path<(Uuid, Uuid)>,
+) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+    let pool = &deployment.db().pool;
+    Workspace::unlink_from_task(pool, workspace_id).await?;
     Ok(ResponseJson(ApiResponse::success(())))
 }

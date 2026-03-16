@@ -1,5 +1,6 @@
 import { makeLocalApiRequest } from '@/shared/lib/localApiTransport';
 import type { LocalTask } from './taskAdapter';
+import type { Workspace as LocalWorkspace } from 'shared/types';
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
 
@@ -100,4 +101,30 @@ export function bulkUpdateLocalTasks(
     method: 'POST',
     body: JSON.stringify({ updates }),
   });
+}
+
+// ── Workspace-Task linking ───────────────────────────────────────────────────
+
+export function listTaskWorkspaces(taskId: string): Promise<LocalWorkspace[]> {
+  return localFetch<LocalWorkspace[]>(`/api/local/tasks/${taskId}/workspaces`);
+}
+
+export function linkWorkspaceToTask(
+  taskId: string,
+  workspaceId: string,
+): Promise<void> {
+  return localFetch<void>(
+    `/api/local/tasks/${taskId}/workspaces/${workspaceId}/link`,
+    { method: 'POST' },
+  );
+}
+
+export function unlinkWorkspaceFromTask(
+  taskId: string,
+  workspaceId: string,
+): Promise<void> {
+  return localFetch<void>(
+    `/api/local/tasks/${taskId}/workspaces/${workspaceId}/link`,
+    { method: 'DELETE' },
+  );
 }

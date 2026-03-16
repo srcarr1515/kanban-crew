@@ -98,6 +98,23 @@ pub async fn create_and_start_workspace(
         .load_managed_workspace(create_workspace_record(&deployment, name).await?)
         .await?;
 
+    // Link workspace to local task and auto-transition status
+    if let Some(linked_issue) = &linked_issue {
+        let pool = &deployment.db().pool;
+        let workspace_id = managed_workspace.workspace.id;
+        let task_id = linked_issue.issue_id;
+
+        Workspace::link_to_task(pool, workspace_id, task_id).await?;
+
+        // Auto-transition task from 'todo' to 'in_progress'
+        sqlx::query(
+            "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now', 'subsec') WHERE id = ? AND status = 'todo'"
+        )
+        .bind(task_id)
+        .execute(pool)
+        .await?;
+    }
+
     for repo in &repos {
         managed_workspace
             .add_repository(repo, deployment.git())
