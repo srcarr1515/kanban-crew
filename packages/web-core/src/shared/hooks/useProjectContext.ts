@@ -23,6 +23,7 @@ import type {
   CreateIssueTagRequest,
   CreateIssueRelationshipRequest,
 } from 'shared/remote-types';
+import type { BulkUpdateIssueItem } from '@/shared/lib/remoteApi';
 
 /**
  * ProjectContext provides project-scoped data and mutations.
@@ -119,6 +120,12 @@ export interface ProjectContextValue {
   issuesById: Map<string, Issue>;
   statusesById: Map<string, ProjectStatus>;
   tagsById: Map<string, Tag>;
+
+  /**
+   * Optional: provided by LocalProjectProvider for drag-drop bulk updates.
+   * When present, KanbanContainer uses this instead of the remote bulkUpdateIssues.
+   */
+  onBulkStatusUpdate?: (updates: BulkUpdateIssueItem[]) => Promise<void>;
 }
 
 export const ProjectContext = createHmrContext<ProjectContextValue | null>(

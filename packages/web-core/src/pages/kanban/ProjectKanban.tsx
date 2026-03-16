@@ -4,6 +4,9 @@ import { Group, Layout, Panel, Separator } from 'react-resizable-panels';
 import { OrgProvider } from '@/shared/providers/remote/OrgProvider';
 import { useOrgContext } from '@/shared/hooks/useOrgContext';
 import { ProjectProvider } from '@/shared/providers/remote/ProjectProvider';
+import { LocalOrgProvider } from '@/shared/providers/local/LocalOrgProvider';
+import { LocalProjectProvider } from '@/shared/providers/local/LocalProjectProvider';
+import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useActions } from '@/shared/hooks/useActions';
 import { usePageTitle } from '@/shared/hooks/usePageTitle';
@@ -202,6 +205,41 @@ function ProjectKanbanInner({ projectId }: { projectId: string }) {
 }
 
 /**
+ * Local-mode inner component — uses LocalProjectProvider instead of the
+ * Electric-backed ProjectProvider.  Org data comes from LocalOrgProvider.
+ */
+function LocalProjectKanbanInner({ projectId }: { projectId: string }) {
+  const { t } = useTranslation('common');
+  const { projects, isLoading } = useOrgContext();
+
+  const project = projects.find((p) => p.id === projectId);
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full w-full">
+        <p className="text-low">{t('states.loading')}</p>
+      </div>
+    );
+  }
+
+  if (!project) {
+    return (
+      <div className="flex items-center justify-center h-full w-full">
+        <p className="text-low">{t('kanban.noProjectFound')}</p>
+      </div>
+    );
+  }
+
+  return (
+    <LocalProjectProvider projectId={projectId}>
+      <ProjectMutationsRegistration>
+        <ProjectKanbanLayout projectName={project.name} />
+      </ProjectMutationsRegistration>
+    </LocalProjectProvider>
+  );
+}
+
+/**
  * Hook to find a project by ID, using orgId from Zustand store
  */
 function useFindProjectById(projectId: string | undefined) {
@@ -276,6 +314,25 @@ export function ProjectKanban() {
       });
     }
   }, [projectId, hasInvalidWorkspaceCreateDraftId, appNavigation]);
+
+  // ── Local mode: skip auth and Electric providers entirely ─────────────────
+  if (IS_LOCAL_MODE) {
+    if (!projectId) {
+      return (
+        <div className="flex items-center justify-center h-full w-full">
+          <p className="text-low">{t('kanban.noProjectFound')}</p>
+        </div>
+      );
+    }
+
+    return (
+      <LocalOrgProvider>
+        <LocalProjectKanbanInner projectId={projectId} />
+      </LocalOrgProvider>
+    );
+  }
+
+  // ── Remote mode ───────────────────────────────────────────────────────────
 
   // Find the project and get its organization
   const { organizationId, isLoading } = useFindProjectById(

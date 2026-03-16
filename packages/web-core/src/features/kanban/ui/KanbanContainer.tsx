@@ -137,6 +137,7 @@ export function KanbanContainer() {
     insertTag,
     pullRequests,
     isLoading: projectLoading,
+    onBulkStatusUpdate,
   } = useProjectContext();
 
   const {
@@ -686,14 +687,18 @@ export function KanbanContainer() {
         });
       }
 
-      // Perform bulk update
+      // Perform bulk update — use local handler when available (local mode),
+      // otherwise fall back to remote Electric bulk update.
       isSyncingRef.current = true;
-      bulkUpdateIssues(updates)
+      const updateFn = onBulkStatusUpdate
+        ? () => onBulkStatusUpdate(updates)
+        : () => bulkUpdateIssues(updates);
+      updateFn()
         .catch((err) => {
           console.error('Failed to bulk update sort order:', err);
         })
         .finally(() => {
-          // Delay clearing flag to let Electric sync complete
+          // Delay clearing flag to let sync complete
           setTimeout(() => {
             isSyncingRef.current = false;
           }, 500);

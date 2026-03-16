@@ -4,6 +4,29 @@ import { getFirstProjectDestination } from '@/shared/lib/firstProjectDestination
 import { useOrganizationStore } from '@/shared/stores/useOrganizationStore';
 import { useUiPreferencesStore } from '@/shared/stores/useUiPreferencesStore';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
+import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
+import {
+  listLocalProjects,
+  createLocalProject,
+} from '@/shared/lib/local/localApi';
+
+async function getLocalProjectDestination(
+  savedProjectId: string | null | undefined
+): Promise<string | null> {
+  let projects = await listLocalProjects();
+
+  if (savedProjectId && projects.some((p) => p.id === savedProjectId)) {
+    return savedProjectId;
+  }
+
+  if (projects.length > 0) {
+    return projects[0].id;
+  }
+
+  // No projects yet — create a default one
+  const created = await createLocalProject('My Project');
+  return created.id;
+}
 
 export function RootRedirectPage() {
   const { config, loading, loginStatus } = useUserSystem();
@@ -22,6 +45,20 @@ export function RootRedirectPage() {
         return;
       }
 
+      // ── Local mode: skip cloud auth, use local projects ──────────────────
+      if (IS_LOCAL_MODE) {
+        const { selectedProjectId } = useUiPreferencesStore.getState();
+        const projectId = await getLocalProjectDestination(selectedProjectId);
+        if (!isActive) return;
+        if (projectId) {
+          appNavigation.goToProject(projectId, { replace: true });
+        } else {
+          appNavigation.goToWorkspacesCreate({ replace: true });
+        }
+        return;
+      }
+
+      // ── Remote mode ───────────────────────────────────────────────────────
       if (loginStatus?.status !== 'loggedin') {
         appNavigation.goToWorkspacesCreate({ replace: true });
         return;

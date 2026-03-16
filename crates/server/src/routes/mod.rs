@@ -8,6 +8,7 @@ use crate::{DeploymentImpl, middleware};
 
 pub mod approvals;
 pub mod config;
+pub mod local;
 pub mod containers;
 pub mod filesystem;
 // pub mod github;
@@ -49,6 +50,7 @@ pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
         .merge(search::router(&deployment))
         .merge(releases::router())
         .merge(migration::router())
+        .merge(local::router())
         .merge(sessions::router(&deployment))
         .merge(terminal::router())
         .nest("/remote", remote::router())
