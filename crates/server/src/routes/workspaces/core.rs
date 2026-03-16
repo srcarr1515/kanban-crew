@@ -160,12 +160,25 @@ pub async fn delete_workspace(
         }
     }
 
+    // Capture task_id before deletion so we can transition the task afterwards
+    let linked_task_id = workspace.task_id;
+
     let managed_workspace = workspace_manager.load_managed_workspace(workspace).await?;
     let deletion_context = managed_workspace.prepare_deletion_context().await?;
     let rows_affected = managed_workspace.delete_record().await?;
 
     if rows_affected == 0 {
         return Err(ApiError::Database(SqlxError::RowNotFound));
+    }
+
+    // If the deleted workspace was linked to a task, transition task to 'cancelled'
+    if let Some(task_id) = linked_task_id {
+        let _ = sqlx::query(
+            "UPDATE tasks SET status = 'cancelled', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'in_progress', 'in_review')",
+        )
+        .bind(task_id)
+        .execute(pool)
+        .await;
     }
 
     deployment

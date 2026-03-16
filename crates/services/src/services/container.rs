@@ -234,11 +234,23 @@ pub trait ContainerService {
         action.next_action.is_none()
     }
 
-    /// Finalize workspace execution by sending notifications
+    /// Finalize workspace execution by sending notifications and transitioning task status
     async fn finalize_task(&self, ctx: &ExecutionContext) {
         // Skip notification if process was intentionally killed by user
         if matches!(ctx.execution_process.status, ExecutionProcessStatus::Killed) {
             return;
+        }
+
+        // Transition linked task to 'in_review' when execution completes successfully
+        if matches!(ctx.execution_process.status, ExecutionProcessStatus::Completed) {
+            if let Some(task_id) = ctx.workspace.task_id {
+                let _ = sqlx::query(
+                    "UPDATE tasks SET status = 'in_review', updated_at = datetime('now', 'subsec') WHERE id = ? AND status = 'in_progress'",
+                )
+                .bind(task_id)
+                .execute(&self.db().pool)
+                .await;
+            }
         }
 
         let workspace_name = ctx

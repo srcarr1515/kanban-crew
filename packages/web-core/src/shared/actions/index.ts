@@ -326,6 +326,9 @@ export const Actions = {
         ctx.queryClient.invalidateQueries({
           queryKey: workspaceSummaryKeys.all,
         });
+        // Refresh local task/workspace data so kanban reflects deletion + status change
+        ctx.queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
+        ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
 
         // Navigate away if we deleted the current workspace
         if (isCurrentWorkspace) {

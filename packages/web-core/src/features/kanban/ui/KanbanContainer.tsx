@@ -63,6 +63,9 @@ import {
 } from '@vibe/ui/components/Dropdown';
 import { SearchableTagDropdownContainer } from '@/shared/components/SearchableTagDropdownContainer';
 import type { IssuePriority } from 'shared/remote-types';
+import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
+import { useAutoCreateWorkspace } from '@/shared/hooks/useAutoCreateWorkspace';
+import { DefaultRepoDialog } from '@/shared/components/DefaultRepoDialog';
 
 const areStringSetsEqual = (left: string[], right: string[]): boolean => {
   if (left.length !== right.length) {
@@ -147,6 +150,7 @@ export function KanbanContainer() {
   } = useOrgContext();
   const { activeWorkspaces } = useWorkspaceContext();
   const { userId } = useAuth();
+  const { triggerAutoCreate } = useAutoCreateWorkspace(projectId);
 
   // Get project name by finding the project matching current projectId
   const projectName = projects.find((p) => p.id === projectId)?.name ?? '';
@@ -437,6 +441,7 @@ export function KanbanContainer() {
   // Track items as arrays of IDs grouped by status
   const [items, setItems] = useState<Record<string, string[]>>({});
   const [isFiltersDialogOpen, setIsFiltersDialogOpen] = useState(false);
+  const [isDefaultRepoOpen, setIsDefaultRepoOpen] = useState(false);
 
   // Sync items from filtered issues when they change
   useEffect(() => {
@@ -642,9 +647,11 @@ export function KanbanContainer() {
 
       // Update local state and capture new items for bulk update
       let newItems: Record<string, string[]> = {};
+      let movedIssueId: string | undefined;
       setItems((prev) => {
         const sourceItems = [...(prev[sourceId] ?? [])];
         const [moved] = sourceItems.splice(source.index, 1);
+        movedIssueId = moved;
 
         if (!isCrossColumn) {
           // Within-column reorder
@@ -699,6 +706,20 @@ export function KanbanContainer() {
         ? () => localHandler(updates)
         : () => bulkUpdateIssues(updates);
       updateFn()
+        .then(() => {
+          // Auto-create workspace when task is dragged to "in_progress" (local mode only)
+          if (
+            IS_LOCAL_MODE &&
+            isCrossColumn &&
+            destId === 'in_progress' &&
+            movedIssueId
+          ) {
+            const issue = issuesById.get(movedIssueId);
+            const hasWorkspaces =
+              getWorkspacesForIssue(movedIssueId).length > 0;
+            triggerAutoCreate(movedIssueId, issue, hasWorkspaces);
+          }
+        })
         .catch((err: unknown) => {
           console.error('[Kanban] Bulk status update failed:', err);
           // Force refetch to revert to server state
@@ -711,7 +732,13 @@ export function KanbanContainer() {
           }, 500);
         });
     },
-    [kanbanFilters.sortField, calculateSortOrder]
+    [
+      kanbanFilters.sortField,
+      calculateSortOrder,
+      issuesById,
+      getWorkspacesForIssue,
+      triggerAutoCreate,
+    ]
   );
 
   const handleCardClick = useCallback(
@@ -833,6 +860,13 @@ export function KanbanContainer() {
               >
                 {t('kanban.editProjectSettings', 'Edit project settings')}
               </DropdownMenuItem>
+              {IS_LOCAL_MODE && (
+                <DropdownMenuItem
+                  onClick={() => setIsDefaultRepoOpen(true)}
+                >
+                  {t('kanban.defaultRepo', 'Default repository')}
+                </DropdownMenuItem>
+              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1046,6 +1080,14 @@ export function KanbanContainer() {
             />
           </KanbanProvider>
         </div>
+      )}
+
+      {IS_LOCAL_MODE && (
+        <DefaultRepoDialog
+          projectId={projectId}
+          open={isDefaultRepoOpen}
+          onOpenChange={setIsDefaultRepoOpen}
+        />
       )}
     </div>
   );
