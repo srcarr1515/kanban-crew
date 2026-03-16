@@ -212,7 +212,7 @@ export function ChatPanel() {
             onKeyDown={handleKeyDown}
             placeholder={activeThreadId ? 'Ask anything...' : 'Create a thread to start'}
             disabled={!activeThreadId || isStreaming}
-            rows={1}
+            rows={4}
             className="flex-1 resize-none rounded-lg border bg-secondary px-3 py-2 text-sm text-high placeholder:text-low focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-50"
           />
           <button

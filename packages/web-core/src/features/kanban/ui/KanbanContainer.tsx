@@ -348,6 +348,10 @@ export function KanbanContainer() {
   // Track when drag-drop sync is in progress to prevent flicker
   const isSyncingRef = useRef(false);
 
+  // Keep latest onBulkStatusUpdate in a ref to avoid stale closures in handleDragEnd
+  const onBulkStatusUpdateRef = useRef(onBulkStatusUpdate);
+  onBulkStatusUpdateRef.current = onBulkStatusUpdate;
+
   useEffect(() => {
     if (
       prevProjectIdRef.current !== null &&
@@ -690,12 +694,15 @@ export function KanbanContainer() {
       // Perform bulk update — use local handler when available (local mode),
       // otherwise fall back to remote Electric bulk update.
       isSyncingRef.current = true;
-      const updateFn = onBulkStatusUpdate
-        ? () => onBulkStatusUpdate(updates)
+      const localHandler = onBulkStatusUpdateRef.current;
+      const updateFn = localHandler
+        ? () => localHandler(updates)
         : () => bulkUpdateIssues(updates);
       updateFn()
-        .catch((err) => {
-          console.error('Failed to bulk update sort order:', err);
+        .catch((err: unknown) => {
+          console.error('[Kanban] Bulk status update failed:', err);
+          // Force refetch to revert to server state
+          isSyncingRef.current = false;
         })
         .finally(() => {
           // Delay clearing flag to let sync complete

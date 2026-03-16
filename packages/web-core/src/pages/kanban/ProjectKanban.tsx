@@ -202,7 +202,7 @@ function ProjectKanbanLayout({ projectName }: { projectName: string }) {
       </Group>
       {IS_LOCAL_MODE && <ChatToggleButton />}
       {IS_LOCAL_MODE && isChatOpen && (
-        <div className="fixed bottom-20 right-4 z-50 w-[420px] h-[600px] max-h-[calc(100vh-8rem)] rounded-xl border border-border bg-primary shadow-2xl overflow-hidden flex flex-col">
+        <div className="fixed bottom-20 right-4 z-50 w-[420px] h-[1200px] max-h-[calc(100vh-8rem)] rounded-xl border border-border bg-primary shadow-2xl overflow-hidden flex flex-col">
           <ChatPanel />
         </div>
       )}

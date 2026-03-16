@@ -11,7 +11,7 @@ import {
   deleteLocalTask,
   bulkUpdateLocalTasks,
 } from '@/shared/lib/local/localApi';
-import { taskToIssue } from '@/shared/lib/local/taskAdapter';
+import { taskToIssue, type LocalTask } from '@/shared/lib/local/taskAdapter';
 import { getLocalStatuses } from '@/shared/lib/local/localStatuses';
 import type { Issue } from 'shared/remote-types';
 import type { InsertResult, MutationResult } from '@/shared/lib/electric/types';
@@ -75,7 +75,36 @@ export function LocalProjectProvider({
         status: changes.status_id ?? undefined,
         sort_order: changes.sort_order ?? undefined,
       }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onMutate: async ({ id, changes }) => {
+      await queryClient.cancelQueries({ queryKey });
+      const previousTasks = queryClient.getQueryData<LocalTask[]>(queryKey);
+      queryClient.setQueryData<LocalTask[]>(queryKey, (old) => {
+        if (!old) return old;
+        return old.map((task) => {
+          if (task.id !== id) return task;
+          return {
+            ...task,
+            ...(changes.title != null ? { title: changes.title } : {}),
+            ...(changes.description !== undefined
+              ? { description: changes.description }
+              : {}),
+            ...(changes.status_id != null
+              ? { status: changes.status_id }
+              : {}),
+            ...(changes.sort_order != null
+              ? { sort_order: changes.sort_order }
+              : {}),
+          };
+        });
+      });
+      return { previousTasks };
+    },
+    onError: (_err, _vars, context) => {
+      if (context?.previousTasks) {
+        queryClient.setQueryData(queryKey, context.previousTasks);
+      }
+    },
+    onSettled: () => queryClient.invalidateQueries({ queryKey }),
   });
 
   const deleteMutation = useMutation({
@@ -92,7 +121,44 @@ export function LocalProjectProvider({
           sort_order: u.changes.sort_order ?? undefined,
         }))
       ),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey }),
+    onMutate: async (updates) => {
+      // Cancel in-flight refetches so they don't overwrite our optimistic update
+      await queryClient.cancelQueries({ queryKey });
+
+      // Snapshot for rollback
+      const previousTasks = queryClient.getQueryData<LocalTask[]>(queryKey);
+
+      // Optimistically update the cache
+      queryClient.setQueryData<LocalTask[]>(queryKey, (old) => {
+        if (!old) return old;
+        const changeMap = new Map(
+          updates.map((u) => [u.id, u.changes] as const)
+        );
+        return old.map((task) => {
+          const changes = changeMap.get(task.id);
+          if (!changes) return task;
+          return {
+            ...task,
+            ...(changes.status_id != null ? { status: changes.status_id } : {}),
+            ...(changes.sort_order != null
+              ? { sort_order: changes.sort_order }
+              : {}),
+          };
+        });
+      });
+
+      return { previousTasks };
+    },
+    onError: (_err, _updates, context) => {
+      // Roll back to previous state on failure
+      if (context?.previousTasks) {
+        queryClient.setQueryData(queryKey, context.previousTasks);
+      }
+    },
+    onSettled: () => {
+      // Always refetch after mutation to sync with server
+      queryClient.invalidateQueries({ queryKey });
+    },
   });
 
   // ── ProjectContextValue helpers ────────────────────────────────────────────

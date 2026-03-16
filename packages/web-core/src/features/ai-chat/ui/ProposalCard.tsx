@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { CheckCircleIcon, SpinnerIcon } from '@phosphor-icons/react';
+import { CheckCircleIcon, PencilSimpleIcon, SpinnerIcon } from '@phosphor-icons/react';
 import type { Proposal } from '@/shared/lib/local/chatApi';
 import { createLocalTask } from '@/shared/lib/local/localApi';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useQueryClient } from '@tanstack/react-query';
+import { EditProposalDialog } from './EditProposalDialog';
 
 interface ProposalCardProps {
   proposal: Proposal;
@@ -25,10 +26,17 @@ export function ProposalCard({ proposal }: ProposalCardProps) {
           status: ticket.status || 'todo',
         });
       }
-      await queryClient.invalidateQueries({ queryKey: ['local-tasks'] });
+      await queryClient.invalidateQueries({ queryKey: ['local', 'tasks', projectId] });
       setStatus('done');
     } catch {
       setStatus('idle');
+    }
+  };
+
+  const handleEditAndCreate = async () => {
+    const result = await EditProposalDialog.show({ proposal, projectId });
+    if (result === 'created') {
+      setStatus('done');
     }
   };
 
@@ -59,21 +67,32 @@ export function ProposalCard({ proposal }: ProposalCardProps) {
           Tickets created!
         </div>
       ) : (
-        <button
-          type="button"
-          onClick={handleConfirm}
-          disabled={status === 'creating'}
-          className="w-full flex items-center justify-center gap-2 rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand/90 transition-colors disabled:opacity-60"
-        >
-          {status === 'creating' ? (
-            <>
-              <SpinnerIcon className="size-icon-sm animate-spin" />
-              Creating...
-            </>
-          ) : (
-            'Confirm & Create Tickets'
-          )}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={handleEditAndCreate}
+            disabled={status === 'creating'}
+            className="flex-1 flex items-center justify-center gap-1.5 rounded-md border border-brand/40 px-3 py-2 text-sm font-medium text-brand hover:bg-brand/10 transition-colors disabled:opacity-60"
+          >
+            <PencilSimpleIcon className="size-4" />
+            Review & Edit
+          </button>
+          <button
+            type="button"
+            onClick={handleConfirm}
+            disabled={status === 'creating'}
+            className="flex-1 flex items-center justify-center gap-2 rounded-md bg-brand px-3 py-2 text-sm font-medium text-white hover:bg-brand/90 transition-colors disabled:opacity-60"
+          >
+            {status === 'creating' ? (
+              <>
+                <SpinnerIcon className="size-icon-sm animate-spin" />
+                Creating...
+              </>
+            ) : (
+              'Create All'
+            )}
+          </button>
+        </div>
       )}
     </div>
   );
