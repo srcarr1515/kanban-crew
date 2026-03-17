@@ -66,6 +66,7 @@ interface AppBarProps {
   onHoverEnd?: () => void;
   notificationBell?: ReactNode;
   userPopover?: ReactNode;
+  crewButton?: ReactNode;
   starCount?: number | null;
   onlineCount?: number | null;
   appVersion?: string | null;
@@ -125,6 +126,7 @@ export function AppBar({
   onHoverEnd,
   notificationBell,
   userPopover,
+  crewButton,
   starCount,
   onlineCount,
   appVersion,
@@ -388,6 +390,7 @@ export function AppBar({
       <div className="mt-auto pt-base flex flex-col items-center gap-4">
         {notificationBell}
         {userPopover}
+        {crewButton}
         <AppBarSocialLink
           href="https://github.com/BloopAI/vibe-kanban"
           label="Star on GitHub"

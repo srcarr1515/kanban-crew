@@ -144,3 +144,58 @@ export function unlinkWorkspaceFromTask(
     { method: 'DELETE' },
   );
 }
+
+// ── Crew Members ─────────────────────────────────────────────────────────────
+
+export interface CrewMember {
+  id: string;
+  name: string;
+  role: string;
+  avatar: string;
+  role_prompt: string;
+  tool_access: string;
+  personality: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function listCrewMembers(): Promise<CrewMember[]> {
+  return localFetch<CrewMember[]>('/api/local/crew-members');
+}
+
+export function createCrewMember(data: {
+  name: string;
+  role: string;
+  avatar?: string;
+  role_prompt?: string;
+  tool_access?: unknown[];
+  personality?: string;
+}): Promise<CrewMember> {
+  return localFetch<CrewMember>('/api/local/crew-members', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}
+
+export function updateCrewMember(
+  id: string,
+  changes: {
+    name?: string;
+    role?: string;
+    avatar?: string;
+    role_prompt?: string;
+    tool_access?: unknown[];
+    personality?: string;
+  }
+): Promise<CrewMember> {
+  return localFetch<CrewMember>(`/api/local/crew-members/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(changes),
+  });
+}
+
+export function deleteCrewMember(id: string): Promise<void> {
+  return localFetch<void>(`/api/local/crew-members/${id}`, {
+    method: 'DELETE',
+  });
+}

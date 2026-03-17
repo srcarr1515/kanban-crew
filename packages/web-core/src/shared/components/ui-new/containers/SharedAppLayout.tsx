@@ -2,7 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DropResult } from '@hello-pangea/dnd';
 import { Outlet } from '@tanstack/react-router';
 import { siDiscord, siGithub } from 'simple-icons';
-import { XIcon, PlusIcon, LayoutIcon, KanbanIcon } from '@phosphor-icons/react';
+import {
+  XIcon,
+  PlusIcon,
+  LayoutIcon,
+  KanbanIcon,
+  UsersThreeIcon,
+} from '@phosphor-icons/react';
 import { SyncErrorProvider } from '@/shared/providers/SyncErrorProvider';
 import { useIsMobile } from '@/shared/hooks/useIsMobile';
 import { useUiPreferencesStore } from '@/shared/stores/useUiPreferencesStore';
@@ -37,6 +43,7 @@ import {
 import { OAuthDialog } from '@/shared/dialogs/global/OAuthDialog';
 import { CommandBarDialog } from '@/shared/dialogs/command-bar/CommandBarDialog';
 import { useCommandBarShortcut } from '@/shared/hooks/useCommandBarShortcut';
+import { CrewDialog } from '@/shared/dialogs/crew/CrewDialog';
 import { useWorkspaceSidebarPreviewController } from '@/shared/hooks/useWorkspaceSidebarPreviewController';
 import { useShape } from '@/shared/integrations/electric/hooks';
 import { sortProjectsByOrder } from '@/shared/lib/projectOrder';
@@ -48,6 +55,7 @@ import {
 import { AppBarNotificationBellContainer } from '@/pages/workspaces/AppBarNotificationBellContainer';
 import { WorkspacesSidebarContainer } from '@/pages/workspaces/WorkspacesSidebarContainer';
 import { WorkspacesSidebarReopenTag } from '@vibe/ui/components/WorkspacesSidebar';
+import { Tooltip } from '@vibe/ui/components/Tooltip';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import {
   listLocalProjects,
@@ -313,6 +321,14 @@ export function SharedAppLayout() {
     }
   }, []);
 
+  const handleCrewClick = useCallback(async () => {
+    try {
+      await CrewDialog.show();
+    } catch {
+      // Dialog cancelled
+    }
+  }, []);
+
   const handleMigrate = useCallback(async () => {
     if (!isSignedIn) {
       try {
@@ -380,6 +396,24 @@ export function SharedAppLayout() {
                   onOrgSelect={setSelectedOrgId}
                   onCreateOrg={handleCreateOrg}
                 />
+              }
+              crewButton={
+                <Tooltip content="Crew" side="right">
+                  <button
+                    type="button"
+                    onClick={handleCrewClick}
+                    className={cn(
+                      'flex items-center justify-center w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg',
+                      'bg-panel text-normal font-medium text-sm',
+                      'transition-colors cursor-pointer',
+                      'hover:bg-panel/70',
+                      'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand'
+                    )}
+                    aria-label="Crew"
+                  >
+                    <UsersThreeIcon className="size-icon-sm" weight="bold" />
+                  </button>
+                </Tooltip>
               }
               starCount={starCount}
               onlineCount={onlineCount}
