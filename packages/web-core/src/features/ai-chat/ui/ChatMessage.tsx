@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { RobotIcon, UserIcon } from '@phosphor-icons/react';
 import type { ChatMessage as ChatMessageType } from '@/shared/lib/local/chatApi';
 import { extractProposals } from '@/shared/lib/local/chatApi';
@@ -54,6 +54,39 @@ export function ChatMessageBubble({ message }: ChatMessageProps) {
   );
 }
 
+const RESEARCH_PHASES = ['Thinking', 'Researching', 'Analyzing'] as const;
+
+function ResearchingIndicator() {
+  const [phase, setPhase] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setPhase((p) => (p + 1) % RESEARCH_PHASES.length);
+    }, 2500);
+    return () => clearInterval(interval);
+  }, []);
+
+  return (
+    <span className="inline-flex items-center gap-2 text-low">
+      <span className="inline-flex gap-0.5 items-center">
+        <span
+          className="size-1.5 rounded-full bg-current animate-bounce"
+          style={{ animationDelay: '0ms', animationDuration: '1s' }}
+        />
+        <span
+          className="size-1.5 rounded-full bg-current animate-bounce"
+          style={{ animationDelay: '150ms', animationDuration: '1s' }}
+        />
+        <span
+          className="size-1.5 rounded-full bg-current animate-bounce"
+          style={{ animationDelay: '300ms', animationDuration: '1s' }}
+        />
+      </span>
+      <span className="transition-opacity duration-300">{RESEARCH_PHASES[phase]}</span>
+    </span>
+  );
+}
+
 interface StreamingMessageProps {
   content: string;
 }
@@ -72,12 +105,7 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
       </div>
       <div className="min-w-0 max-w-[85%] space-y-1">
         <div className="rounded-xl rounded-tl-sm px-3 py-2 text-sm whitespace-pre-wrap break-words bg-panel text-high">
-          {displayContent || (
-            <span className="inline-flex gap-1 text-low">
-              <span className="animate-pulse">Thinking</span>
-              <span className="animate-bounce">...</span>
-            </span>
-          )}
+          {displayContent || <ResearchingIndicator />}
         </div>
         {proposals.map((proposal, i) => (
           <ProposalCard key={i} proposal={proposal} />
