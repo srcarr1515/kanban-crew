@@ -21,6 +21,7 @@ import { ChangeTargetBranchDialog } from '@/shared/dialogs/command-bar/ChangeTar
 import RepoSelector from '@/shared/components/tasks/RepoSelector';
 import { BranchRebaseDialog } from '@/shared/dialogs/command-bar/BranchRebaseDialog';
 import { CreatePRDialog } from '@/shared/dialogs/command-bar/CreatePRDialog';
+import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
 
 import { useTranslation } from 'react-i18next';
 import { useWorkspaceRepo } from '@/shared/hooks/useWorkspaceRepo';
@@ -35,6 +36,8 @@ interface GitOperationsProps {
   selectedBranch: string | null;
   layout?: 'horizontal' | 'vertical';
   issueIdentifier?: string;
+  /** Number of active sub-tasks. When > 0, merge shows a warning confirmation. */
+  activeSubTaskCount?: number;
 }
 
 export type GitOperationsInputs = Omit<GitOperationsProps, 'selectedAttempt'>;
@@ -47,6 +50,7 @@ function GitOperations({
   selectedBranch,
   layout = 'horizontal',
   issueIdentifier,
+  activeSubTaskCount = 0,
 }: GitOperationsProps) {
   const { t } = useTranslation('tasks');
 
@@ -167,7 +171,16 @@ function GitOperations({
   }, [mergeInfo.hasOpenPR, pushSuccess, pushing, t]);
 
   const handleMergeClick = async () => {
-    // Directly perform merge without checking branch status
+    if (activeSubTaskCount > 0) {
+      const result = await ConfirmDialog.show({
+        title: 'Active Sub-tasks',
+        message: `This task has ${activeSubTaskCount} active sub-task${activeSubTaskCount > 1 ? 's' : ''}. Merging now may cause conflicts with in-progress work. Are you sure?`,
+        confirmText: 'Merge Anyway',
+        cancelText: 'Cancel',
+        variant: 'destructive',
+      });
+      if (result !== 'confirmed') return;
+    }
     await performMerge();
   };
 

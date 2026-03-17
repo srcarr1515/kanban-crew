@@ -35,6 +35,7 @@ use executors::{
     env::{ExecutionEnv, RepoContext},
     executors::{BaseCodingAgent, CancellationToken, ExecutorExitResult, ExecutorExitSignal},
     logs::{NormalizedEntryType, utils::patch::extract_normalized_entry_from_patch},
+    profile::ExecutorConfig,
 };
 use futures::{FutureExt, TryStreamExt, stream::select};
 use git::GitService;
@@ -475,6 +476,349 @@ impl LocalContainerService {
         any_committed
     }
 
+    /// After a task is finalized (moved to in_review), check if auto-pickup is enabled
+    /// and start a new workspace for the next ready task.
+    async fn try_auto_pickup(&self, ctx: &ExecutionContext) {
+        use services::services::auto_pickup;
+
+        // Only trigger for successful CodingAgent completions with a linked task
+        if !matches!(ctx.execution_process.status, ExecutionProcessStatus::Completed)
+            || !matches!(
+                ctx.execution_process.run_reason,
+                ExecutionProcessRunReason::CodingAgent
+            )
+        {
+            return;
+        }
+
+        let task_id = match ctx.workspace.task_id {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Try to select the next task
+        let pickup_result = match auto_pickup::try_select_next_task(&self.db, task_id).await {
+            Ok(Some(result)) => result,
+            Ok(None) => {
+                tracing::debug!("Auto-pickup: no task selected (disabled or no ready tasks)");
+                return;
+            }
+            Err(e) => {
+                tracing::warn!("Auto-pickup failed: {e}");
+                return;
+            }
+        };
+
+        tracing::info!(
+            "Auto-pickup: selected task \"{}\" ({})",
+            pickup_result.selected_task_title,
+            pickup_result.selected_task_id,
+        );
+
+        // Extract executor config from the completed workspace's execution
+        let executor_config = match ctx
+            .execution_process
+            .executor_action()
+            .ok()
+            .and_then(|action| match action.typ() {
+                ExecutorActionType::CodingAgentInitialRequest(req) => {
+                    Some(req.executor_config.clone())
+                }
+                ExecutorActionType::CodingAgentFollowUpRequest(req) => {
+                    Some(req.executor_config.clone())
+                }
+                _ => None,
+            }) {
+            Some(config) => config,
+            None => {
+                tracing::warn!("Auto-pickup: could not extract executor config from completed workspace");
+                return;
+            }
+        };
+
+        // Get repos from the completed workspace to reuse the same repo setup
+        let repos = match WorkspaceRepo::find_repos_with_target_branch_for_workspace(
+            &self.db.pool,
+            ctx.workspace.id,
+        )
+        .await
+        {
+            Ok(repos) => repos,
+            Err(e) => {
+                tracing::warn!("Auto-pickup: failed to get repos: {e}");
+                return;
+            }
+        };
+
+        if repos.is_empty() {
+            tracing::warn!("Auto-pickup: completed workspace has no repos");
+            return;
+        }
+
+        let selected_task_id = pickup_result.selected_task_id;
+        let selected_task_title = pickup_result.selected_task_title;
+        let parent_task_id = pickup_result.parent_task_id;
+
+        // Note: the task has already been atomically claimed (transitioned to in_progress)
+        // by try_select_next_task, so no duplicate status update is needed here.
+
+        // Fetch the task description for the prompt
+        let task_description: Option<String> =
+            sqlx::query_scalar("SELECT description FROM tasks WHERE id = ?")
+                .bind(selected_task_id)
+                .fetch_optional(&self.db.pool)
+                .await
+                .ok()
+                .flatten();
+
+        // Try to reuse parent task's workspace for sub-issues
+        if let Some(parent_id) = parent_task_id {
+            match self
+                .try_reuse_parent_workspace(
+                    parent_id,
+                    selected_task_id,
+                    &selected_task_title,
+                    &executor_config,
+                    task_description.as_deref(),
+                )
+                .await
+            {
+                Ok(true) => return, // Successfully reused parent workspace
+                Ok(false) => {
+                    tracing::debug!("Auto-pickup: no reusable parent workspace, creating new");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        "Auto-pickup: failed to reuse parent workspace, creating new: {e}"
+                    );
+                }
+            }
+        }
+
+        // Create a new workspace
+        let workspace_id = Uuid::new_v4();
+        let branch_name = self
+            .git_branch_from_workspace(&workspace_id, &selected_task_title)
+            .await;
+
+        let workspace = match Workspace::create(
+            &self.db.pool,
+            &db::models::workspace::CreateWorkspace {
+                branch: branch_name,
+                name: Some(selected_task_title.clone()),
+            },
+            workspace_id,
+        )
+        .await
+        {
+            Ok(ws) => ws,
+            Err(e) => {
+                tracing::error!("Auto-pickup: failed to create workspace: {e}");
+                return;
+            }
+        };
+
+        // Link workspace to the selected task
+        if let Err(e) = Workspace::link_to_task(&self.db.pool, workspace_id, selected_task_id).await
+        {
+            self.cleanup_orphaned_workspace(workspace_id).await;
+            tracing::error!("Auto-pickup: failed to link workspace to task: {e}");
+            return;
+        }
+
+        // Load managed workspace and add repos
+        let mut managed_workspace = match self
+            .workspace_manager
+            .load_managed_workspace(workspace)
+            .await
+        {
+            Ok(mw) => mw,
+            Err(e) => {
+                self.cleanup_orphaned_workspace(workspace_id).await;
+                tracing::error!("Auto-pickup: failed to load managed workspace: {e}");
+                return;
+            }
+        };
+
+        let repo_inputs: Vec<_> = repos
+            .iter()
+            .map(|r| db::models::requests::WorkspaceRepoInput {
+                repo_id: r.repo.id,
+                target_branch: r.target_branch.clone(),
+            })
+            .collect();
+
+        for repo_input in &repo_inputs {
+            if let Err(e) = managed_workspace
+                .add_repository(repo_input, &self.git)
+                .await
+            {
+                self.cleanup_orphaned_workspace(workspace_id).await;
+                tracing::error!(
+                    "Auto-pickup: failed to add repo {} to workspace: {e}",
+                    repo_input.repo_id
+                );
+                return;
+            }
+        }
+
+        // Build prompt from the task
+        let prompt = format!(
+            "Implement the following task:\n\nTitle: {}\n{}",
+            selected_task_title,
+            task_description
+                .as_deref()
+                .map(|d| format!("\nDescription: {d}"))
+                .unwrap_or_default()
+        );
+
+        let workspace = managed_workspace.workspace.clone();
+
+        // Start the workspace execution
+        match self
+            .start_workspace(&workspace, executor_config, prompt)
+            .await
+        {
+            Ok(ep) => {
+                tracing::info!(
+                    "Auto-pickup: started workspace {} for task \"{}\" (execution {})",
+                    workspace.id,
+                    selected_task_title,
+                    ep.id,
+                );
+            }
+            Err(e) => {
+                self.cleanup_orphaned_workspace(workspace_id).await;
+                tracing::error!("Auto-pickup: failed to start workspace: {e}");
+            }
+        }
+    }
+
+    /// Try to reuse a parent task's workspace for a sub-issue by sending a follow-up prompt.
+    /// Returns Ok(true) if successfully reused, Ok(false) if no reusable workspace found.
+    ///
+    /// Safety: refuses to reuse a workspace that has a running execution (defense-in-depth;
+    /// the main guard is in auto_pickup::find_tasks_with_active_parent_workspace).
+    async fn try_reuse_parent_workspace(
+        &self,
+        parent_task_id: Uuid,
+        sub_task_id: Uuid,
+        sub_task_title: &str,
+        executor_config: &ExecutorConfig,
+        description: Option<&str>,
+    ) -> Result<bool, ContainerError> {
+        // Find the parent task's workspace (most recent, non-archived)
+        let parent_workspaces = Workspace::find_by_task_id(&self.db.pool, parent_task_id).await?;
+        let parent_workspace = match parent_workspaces
+            .into_iter()
+            .find(|ws| !ws.archived)
+        {
+            Some(ws) => ws,
+            None => return Ok(false),
+        };
+
+        // Defense-in-depth: check that the workspace has no running execution
+        let has_running: bool = sqlx::query_scalar(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM sessions s
+                JOIN execution_processes ep ON ep.session_id = s.id
+                WHERE s.workspace_id = ?
+                  AND ep.status = 'running'
+                  AND ep.run_reason IN ('setupscript', 'cleanupscript', 'codingagent')
+            )"#,
+        )
+        .bind(parent_workspace.id)
+        .fetch_one(&self.db.pool)
+        .await
+        .unwrap_or(false);
+
+        if has_running {
+            tracing::warn!(
+                "Auto-pickup: parent workspace {} has running execution, skipping reuse",
+                parent_workspace.id
+            );
+            return Ok(false);
+        }
+
+        // Find the latest session for the parent workspace
+        let session = match Session::find_latest_by_workspace_id(&self.db.pool, parent_workspace.id)
+            .await?
+        {
+            Some(s) => s,
+            None => return Ok(false),
+        };
+
+        // Find the latest completed execution process from this session
+        let latest_ep = ExecutionProcess::find_latest_by_session_and_run_reason(
+            &self.db.pool,
+            session.id,
+            &ExecutionProcessRunReason::CodingAgent,
+        )
+        .await?;
+
+        let execution_process = match latest_ep {
+            Some(ep) => ep,
+            None => return Ok(false),
+        };
+
+        // Re-link the workspace to the sub-issue task
+        Workspace::link_to_task(&self.db.pool, parent_workspace.id, sub_task_id).await?;
+
+        // Transition parent task to "in_review" since its workspace is being reassigned
+        // to a sub-task. Human review moves it to "done".
+        let _ = sqlx::query(
+            "UPDATE tasks SET status = 'in_review', updated_at = datetime('now', 'subsec') WHERE id = ? AND status NOT IN ('in_review', 'done', 'cancelled')",
+        )
+        .bind(parent_task_id)
+        .execute(&self.db.pool)
+        .await;
+
+        // Build the follow-up prompt
+        let prompt = format!(
+            "The previous task is complete. Now implement this sub-issue:\n\nTitle: {}\n{}",
+            sub_task_title,
+            description
+                .map(|d| format!("\nDescription: {d}"))
+                .unwrap_or_default()
+        );
+
+        let follow_up_data = DraftFollowUpData {
+            message: prompt,
+            executor_config: executor_config.clone(),
+        };
+
+        let repos = WorkspaceRepo::find_repos_for_workspace(&self.db.pool, parent_workspace.id).await?;
+
+        let ctx = ExecutionContext {
+            execution_process,
+            session,
+            workspace: parent_workspace,
+            repos,
+        };
+
+        let ep = self.start_queued_follow_up(&ctx, &follow_up_data).await?;
+
+        tracing::info!(
+            "Auto-pickup: sent follow-up to parent workspace {} for sub-issue \"{}\" (execution {})",
+            ctx.workspace.id,
+            sub_task_title,
+            ep.id,
+        );
+
+        Ok(true)
+    }
+
+    /// Archive an orphaned workspace created during a failed auto-pickup attempt.
+    async fn cleanup_orphaned_workspace(&self, workspace_id: Uuid) {
+        tracing::warn!("Auto-pickup: cleaning up orphaned workspace {workspace_id}");
+        let _ = sqlx::query(
+            "UPDATE workspaces SET archived = 1, updated_at = datetime('now', 'subsec') WHERE id = ?",
+        )
+        .bind(workspace_id)
+        .execute(&self.db.pool)
+        .await;
+    }
+
     /// Spawn a background task that polls the child process for completion and
     /// cleans up the execution entry when it exits.
     pub fn spawn_exit_monitor(
@@ -786,6 +1130,9 @@ impl LocalContainerService {
                         .await;
                     });
                 }
+
+                // Auto-pickup: if task was finalized, try to start the next ready task
+                container.try_auto_pickup(&ctx).await;
             }
 
             // Now that commit/next-action/finalization steps for this process are complete,

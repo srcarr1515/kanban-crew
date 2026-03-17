@@ -1,5 +1,5 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useOrgContext } from '@/shared/hooks/useOrgContext';
@@ -58,8 +58,10 @@ import { CommandBarDialog } from '@/shared/dialogs/command-bar/CommandBarDialog'
 import { KanbanFiltersDialog } from '@/shared/dialogs/kanban/KanbanFiltersDialog';
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@vibe/ui/components/Dropdown';
 import { SearchableTagDropdownContainer } from '@/shared/components/SearchableTagDropdownContainer';
@@ -70,7 +72,7 @@ import { DefaultRepoDialog } from '@/shared/components/DefaultRepoDialog';
 import { workspacesApi } from '@/shared/lib/api';
 import { ApiError } from '@/shared/lib/api';
 import { MergeOnDoneDialog } from '@/shared/dialogs/kanban/MergeOnDoneDialog';
-import { createLocalTask, listLocalProjects } from '@/shared/lib/local/localApi';
+import { createLocalTask, listLocalProjects, updateLocalProject } from '@/shared/lib/local/localApi';
 import { ConfirmDialog } from '@/shared/dialogs/shared/ConfirmDialog';
 import { toast } from 'sonner';
 
@@ -159,6 +161,20 @@ export function KanbanContainer() {
   const { userId } = useAuth();
   const { triggerAutoCreate } = useAutoCreateWorkspace(projectId);
   const queryClient = useQueryClient();
+
+  // Auto-pickup toggle (local mode only)
+  const localProjectsQuery = useQuery({
+    queryKey: ['local', 'projects'],
+    queryFn: listLocalProjects,
+    enabled: IS_LOCAL_MODE,
+  });
+  const autoPickupEnabled = IS_LOCAL_MODE
+    ? localProjectsQuery.data?.find((p) => p.id === projectId)?.auto_pickup_enabled ?? false
+    : false;
+  const toggleAutoPickupMutation = useMutation({
+    mutationFn: (enabled: boolean) => updateLocalProject(projectId, { auto_pickup_enabled: enabled }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local', 'projects'] }),
+  });
 
   // Get project name by finding the project matching current projectId
   const projectName = projects.find((p) => p.id === projectId)?.name ?? '';
@@ -645,6 +661,15 @@ export function KanbanContainer() {
         if (unmergedRepos.length === 0) return; // already merged
 
         const workspace = await workspacesApi.get(localWsId);
+
+        // Count active sub-tasks (not done/cancelled) for this issue
+        const activeSubTaskCount = issues.filter(
+          (i) =>
+            i.parent_issue_id === issueId &&
+            i.status_id !== 'done' &&
+            i.status_id !== 'cancelled'
+        ).length;
+
         const result = await MergeOnDoneDialog.show({
           workspaceName: workspace.name || workspace.branch,
           repos: unmergedRepos.map((s) => ({
@@ -652,6 +677,7 @@ export function KanbanContainer() {
             repoName: s.repo_name,
             targetBranch: s.target_branch_name,
           })),
+          activeSubTaskCount,
         });
 
         if (result === 'cancel') {
@@ -1066,6 +1092,19 @@ export function KanbanContainer() {
                 >
                   {t('kanban.defaultRepo', 'Default repository')}
                 </DropdownMenuItem>
+              )}
+              {IS_LOCAL_MODE && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuCheckboxItem
+                    checked={autoPickupEnabled}
+                    onCheckedChange={(checked) =>
+                      toggleAutoPickupMutation.mutate(checked === true)
+                    }
+                  >
+                    Auto-pickup tasks
+                  </DropdownMenuCheckboxItem>
+                </>
               )}
             </DropdownMenuContent>
           </DropdownMenu>

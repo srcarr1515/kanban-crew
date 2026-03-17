@@ -56,4 +56,21 @@ impl Task {
         .fetch_optional(pool)
         .await
     }
+
+    pub async fn find_by_project_and_status(
+        pool: &SqlitePool,
+        project_id: Uuid,
+        status: &str,
+    ) -> Result<Vec<Self>, sqlx::Error> {
+        sqlx::query_as::<_, Task>(
+            r#"SELECT id, project_id, title, description, status, parent_workspace_id, created_at, updated_at
+               FROM tasks
+               WHERE project_id = ? AND status = ?
+               ORDER BY sort_order ASC, created_at ASC"#,
+        )
+        .bind(project_id)
+        .bind(status)
+        .fetch_all(pool)
+        .await
+    }
 }

@@ -28,6 +28,8 @@ pub struct LocalTask {
     pub description: Option<String>,
     pub status: String,
     pub sort_order: i64,
+    pub parent_task_id: Option<Uuid>,
+    pub parent_task_sort_order: Option<f64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -51,6 +53,8 @@ pub struct CreateTaskRequest {
     pub description: Option<String>,
     pub status: Option<String>,
     pub sort_order: Option<i64>,
+    pub parent_task_id: Option<Uuid>,
+    pub parent_task_sort_order: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -59,6 +63,8 @@ pub struct UpdateTaskRequest {
     pub description: Option<Option<String>>,
     pub status: Option<String>,
     pub sort_order: Option<i64>,
+    pub parent_task_id: Option<Option<Uuid>>,
+    pub parent_task_sort_order: Option<Option<f64>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -66,11 +72,17 @@ pub struct BulkUpdateItem {
     pub id: Uuid,
     pub status: Option<String>,
     pub sort_order: Option<i64>,
+    pub parent_task_sort_order: Option<Option<f64>>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct BulkUpdateRequest {
     pub updates: Vec<BulkUpdateItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateProjectRequest {
+    pub auto_pickup_enabled: Option<bool>,
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
@@ -79,6 +91,7 @@ pub fn router() -> Router<DeploymentImpl> {
     Router::new()
         .route("/local/projects", get(list_projects))
         .route("/local/projects", post(create_project))
+        .route("/local/projects/{id}", patch(update_project))
         .route("/local/tasks", get(list_tasks))
         .route("/local/tasks", post(create_task))
         .route("/local/tasks/bulk-update", post(bulk_update_tasks))
@@ -116,12 +129,30 @@ async fn create_project(
     let project = sqlx::query_as::<_, Project>(
         r#"INSERT INTO projects (id, name)
            VALUES (?, ?)
-           RETURNING id, name, default_agent_working_dir, remote_project_id, created_at, updated_at"#,
+           RETURNING id, name, default_agent_working_dir, remote_project_id, auto_pickup_enabled, created_at, updated_at"#,
     )
     .bind(id)
     .bind(&request.name)
     .fetch_one(pool)
     .await?;
+
+    Ok(ResponseJson(ApiResponse::success(project)))
+}
+
+async fn update_project(
+    State(deployment): State<DeploymentImpl>,
+    Path(id): Path<Uuid>,
+    Json(request): Json<UpdateProjectRequest>,
+) -> Result<ResponseJson<ApiResponse<Project>>, ApiError> {
+    let pool = &deployment.db().pool;
+
+    if let Some(enabled) = request.auto_pickup_enabled {
+        Project::set_auto_pickup_enabled(pool, id, enabled).await?;
+    }
+
+    let project = Project::find_by_id(pool, id)
+        .await?
+        .ok_or_else(|| ApiError::BadRequest("Project not found".to_string()))?;
 
     Ok(ResponseJson(ApiResponse::success(project)))
 }
@@ -133,7 +164,8 @@ async fn list_tasks(
     let pool = &deployment.db().pool;
 
     let tasks = sqlx::query_as::<_, LocalTask>(
-        r#"SELECT id, project_id, title, description, status, sort_order, created_at, updated_at
+        r#"SELECT id, project_id, title, description, status, sort_order,
+                  parent_task_id, parent_task_sort_order, created_at, updated_at
            FROM tasks
            WHERE project_id = ?
            ORDER BY sort_order ASC, created_at ASC"#,
@@ -155,9 +187,10 @@ async fn create_task(
     let sort_order = request.sort_order.unwrap_or(0);
 
     let task = sqlx::query_as::<_, LocalTask>(
-        r#"INSERT INTO tasks (id, project_id, title, description, status, sort_order)
-           VALUES (?, ?, ?, ?, ?, ?)
-           RETURNING id, project_id, title, description, status, sort_order, created_at, updated_at"#,
+        r#"INSERT INTO tasks (id, project_id, title, description, status, sort_order, parent_task_id, parent_task_sort_order)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id, project_id, title, description, status, sort_order,
+                     parent_task_id, parent_task_sort_order, created_at, updated_at"#,
     )
     .bind(id)
     .bind(request.project_id)
@@ -165,6 +198,8 @@ async fn create_task(
     .bind(&request.description)
     .bind(&status)
     .bind(sort_order)
+    .bind(request.parent_task_id)
+    .bind(request.parent_task_sort_order)
     .fetch_one(pool)
     .await?;
 
@@ -181,19 +216,26 @@ async fn update_task(
     // Build dynamic update — only update provided fields
     let task = sqlx::query_as::<_, LocalTask>(
         r#"UPDATE tasks
-           SET title       = COALESCE(?, title),
-               description = CASE WHEN ? THEN ? ELSE description END,
-               status      = COALESCE(?, status),
-               sort_order  = COALESCE(?, sort_order),
-               updated_at  = datetime('now', 'subsec')
+           SET title                = COALESCE(?, title),
+               description          = CASE WHEN ? THEN ? ELSE description END,
+               status               = COALESCE(?, status),
+               sort_order           = COALESCE(?, sort_order),
+               parent_task_id       = CASE WHEN ? THEN ? ELSE parent_task_id END,
+               parent_task_sort_order = CASE WHEN ? THEN ? ELSE parent_task_sort_order END,
+               updated_at           = datetime('now', 'subsec')
            WHERE id = ?
-           RETURNING id, project_id, title, description, status, sort_order, created_at, updated_at"#,
+           RETURNING id, project_id, title, description, status, sort_order,
+                     parent_task_id, parent_task_sort_order, created_at, updated_at"#,
     )
     .bind(&request.title)
     .bind(request.description.is_some())
     .bind(request.description.as_ref().and_then(|d| d.as_deref()))
     .bind(&request.status)
     .bind(request.sort_order)
+    .bind(request.parent_task_id.is_some())
+    .bind(request.parent_task_id.as_ref().and_then(|v| v.as_ref()))
+    .bind(request.parent_task_sort_order.is_some())
+    .bind(request.parent_task_sort_order.unwrap_or(None))
     .bind(id)
     .fetch_optional(pool)
     .await?
@@ -222,20 +264,27 @@ async fn bulk_update_tasks(
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let pool = &deployment.db().pool;
 
+    let mut tx = pool.begin().await?;
+
     for item in &request.updates {
         sqlx::query(
             r#"UPDATE tasks
-               SET status     = COALESCE(?, status),
-                   sort_order = COALESCE(?, sort_order),
-                   updated_at = datetime('now', 'subsec')
+               SET status                = COALESCE(?, status),
+                   sort_order            = COALESCE(?, sort_order),
+                   parent_task_sort_order = CASE WHEN ? THEN ? ELSE parent_task_sort_order END,
+                   updated_at            = datetime('now', 'subsec')
                WHERE id = ?"#,
         )
         .bind(&item.status)
         .bind(item.sort_order)
+        .bind(item.parent_task_sort_order.is_some())
+        .bind(item.parent_task_sort_order.unwrap_or(None))
         .bind(item.id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     }
+
+    tx.commit().await?;
 
     Ok(ResponseJson(ApiResponse::success(())))
 }

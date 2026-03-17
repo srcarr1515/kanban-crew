@@ -12,6 +12,8 @@ export interface LocalTask {
   /** One of: "todo" | "ready" | "in_progress" | "in_review" | "done" | "cancelled" */
   status: string;
   sort_order: number;
+  parent_task_id: string | null;
+  parent_task_sort_order: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -40,8 +42,8 @@ export function taskToIssue(task: LocalTask): Issue {
         ? task.updated_at
         : null,
     sort_order: task.sort_order,
-    parent_issue_id: null,
-    parent_issue_sort_order: null,
+    parent_issue_id: task.parent_task_id,
+    parent_issue_sort_order: task.parent_task_sort_order,
     extension_metadata: {},
     creator_user_id: null,
     created_at: task.created_at,

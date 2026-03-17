@@ -1,5 +1,6 @@
 pub mod analytics;
 pub mod approvals;
+pub mod auto_pickup;
 pub mod auth;
 pub mod config;
 pub mod container;

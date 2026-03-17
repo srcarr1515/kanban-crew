@@ -653,7 +653,11 @@ impl GitCli {
         self.git(repo_path, ["checkout", base_branch]).map(|_| ())?;
         self.git(repo_path, ["merge", "--squash", "--no-commit", from_branch])
             .map(|_| ())?;
-        self.git(repo_path, ["commit", "-m", message]).map(|_| ())?;
+        // If squash produced no changes (branch already fully merged), skip the commit
+        let has_changes = self.has_staged_changes(repo_path).unwrap_or(false);
+        if has_changes {
+            self.git(repo_path, ["commit", "-m", message]).map(|_| ())?;
+        }
         let sha = self
             .git(repo_path, ["rev-parse", "HEAD"])?
             .trim()

@@ -42,6 +42,7 @@ export function IssueSubIssuesSectionContainer({
     updateIssue,
     removeIssue,
     getAssigneesForIssue,
+    onBulkStatusUpdate,
     isLoading: projectLoading,
   } = useProjectContext();
 
@@ -129,7 +130,8 @@ export function IssueSubIssuesSectionContainer({
 
       // Show loading overlay while saving
       setIsReordering(true);
-      bulkUpdateIssues(updates)
+      const bulkFn = onBulkStatusUpdate ?? bulkUpdateIssues;
+      bulkFn(updates)
         .catch((err) => {
           console.error('Failed to update sort order:', err);
         })
@@ -138,7 +140,7 @@ export function IssueSubIssuesSectionContainer({
           setTimeout(() => setIsReordering(false), 500);
         });
     },
-    [subIssues]
+    [subIssues, onBulkStatusUpdate]
   );
 
   const isLoading = projectLoading || orgLoading;

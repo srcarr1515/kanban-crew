@@ -8,7 +8,7 @@ import {
 } from '@vibe/ui/components/KeyboardDialog';
 import { Button } from '@vibe/ui/components/Button';
 import { create, useModal } from '@ebay/nice-modal-react';
-import { GitMerge } from 'lucide-react';
+import { AlertTriangle, GitMerge } from 'lucide-react';
 import { defineModal } from '@/shared/lib/modals';
 import { useState } from 'react';
 
@@ -17,11 +17,13 @@ export type MergeOnDoneResult = 'merge' | 'skip' | 'cancel';
 export interface MergeOnDoneDialogProps {
   workspaceName: string;
   repos: { repoId: string; repoName: string; targetBranch: string }[];
+  /** Number of sub-tasks still in progress (not done/cancelled). */
+  activeSubTaskCount?: number;
 }
 
 const MergeOnDoneDialogImpl = create<MergeOnDoneDialogProps>((props) => {
   const modal = useModal();
-  const { workspaceName, repos } = props;
+  const { workspaceName, repos, activeSubTaskCount = 0 } = props;
   const [selectedRepoIdx, setSelectedRepoIdx] = useState(0);
 
   const selectedRepo = repos[selectedRepoIdx];
@@ -39,6 +41,16 @@ const MergeOnDoneDialogImpl = create<MergeOnDoneDialogProps>((props) => {
             to merge before marking as done?
           </DialogDescription>
         </DialogHeader>
+
+        {activeSubTaskCount > 0 && (
+          <div className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 px-3 py-2 text-sm text-amber-200">
+            <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-400" />
+            <span>
+              This task has {activeSubTaskCount} active sub-task{activeSubTaskCount > 1 ? 's' : ''}.
+              Merging now may cause conflicts with in-progress work.
+            </span>
+          </div>
+        )}
 
         {repos.length > 1 && (
           <div className="px-1">

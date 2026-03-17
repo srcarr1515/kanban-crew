@@ -31,6 +31,7 @@ export interface LocalProject {
   name: string;
   default_agent_working_dir: string | null;
   remote_project_id: string | null;
+  auto_pickup_enabled: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -48,6 +49,16 @@ export function createLocalProject(name: string): Promise<LocalProject> {
   });
 }
 
+export function updateLocalProject(
+  id: string,
+  changes: { auto_pickup_enabled?: boolean },
+): Promise<LocalProject> {
+  return localFetch<LocalProject>(`/api/local/projects/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(changes),
+  });
+}
+
 // ── Tasks ─────────────────────────────────────────────────────────────────────
 
 export function listLocalTasks(projectId: string): Promise<LocalTask[]> {
@@ -62,6 +73,8 @@ export function createLocalTask(data: {
   description?: string | null;
   status?: string;
   sort_order?: number;
+  parent_task_id?: string | null;
+  parent_task_sort_order?: number | null;
 }): Promise<LocalTask> {
   return localFetch<LocalTask>('/api/local/tasks', {
     method: 'POST',
@@ -76,7 +89,9 @@ export function updateLocalTask(
     description?: string | null;
     status?: string;
     sort_order?: number;
-  }
+    parent_task_id?: string | null;
+    parent_task_sort_order?: number | null;
+  },
 ): Promise<LocalTask> {
   return localFetch<LocalTask>(`/api/local/tasks/${id}`, {
     method: 'PATCH',
@@ -92,6 +107,7 @@ export interface LocalBulkUpdateItem {
   id: string;
   status?: string;
   sort_order?: number;
+  parent_task_sort_order?: number | null;
 }
 
 export function bulkUpdateLocalTasks(

@@ -86,6 +86,8 @@ export function LocalProjectProvider({
       description?: string | null;
       status?: string;
       sort_order?: number;
+      parent_task_id?: string | null;
+      parent_task_sort_order?: number | null;
     }) => createLocalTask({ ...data, project_id: projectId }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey }),
   });
@@ -103,6 +105,8 @@ export function LocalProjectProvider({
         description: changes.description ?? undefined,
         status: changes.status_id ?? undefined,
         sort_order: changes.sort_order ?? undefined,
+        parent_task_id: changes.parent_issue_id !== undefined ? changes.parent_issue_id ?? null : undefined,
+        parent_task_sort_order: changes.parent_issue_sort_order !== undefined ? changes.parent_issue_sort_order ?? null : undefined,
       }),
     onMutate: async ({ id, changes }) => {
       await queryClient.cancelQueries({ queryKey });
@@ -122,6 +126,12 @@ export function LocalProjectProvider({
               : {}),
             ...(changes.sort_order != null
               ? { sort_order: changes.sort_order }
+              : {}),
+            ...(changes.parent_issue_id !== undefined
+              ? { parent_task_id: changes.parent_issue_id ?? null }
+              : {}),
+            ...(changes.parent_issue_sort_order !== undefined
+              ? { parent_task_sort_order: changes.parent_issue_sort_order ?? null }
               : {}),
           };
         });
@@ -148,6 +158,9 @@ export function LocalProjectProvider({
           id: u.id,
           status: u.changes.status_id ?? undefined,
           sort_order: u.changes.sort_order ?? undefined,
+          parent_task_sort_order: u.changes.parent_issue_sort_order !== undefined
+            ? u.changes.parent_issue_sort_order ?? null
+            : undefined,
         }))
       ),
     onMutate: async (updates) => {
@@ -171,6 +184,9 @@ export function LocalProjectProvider({
             ...(changes.status_id != null ? { status: changes.status_id } : {}),
             ...(changes.sort_order != null
               ? { sort_order: changes.sort_order }
+              : {}),
+            ...(changes.parent_issue_sort_order !== undefined
+              ? { parent_task_sort_order: changes.parent_issue_sort_order ?? null }
               : {}),
           };
         });
@@ -242,8 +258,8 @@ export function LocalProjectProvider({
         target_date: null,
         completed_at: null,
         sort_order: data.sort_order ?? 0,
-        parent_issue_id: null,
-        parent_issue_sort_order: null,
+        parent_issue_id: data.parent_issue_id ?? null,
+        parent_issue_sort_order: data.parent_issue_sort_order ?? null,
         extension_metadata: {},
         creator_user_id: null,
         created_at: new Date().toISOString(),
@@ -255,6 +271,8 @@ export function LocalProjectProvider({
           description: data.description,
           status: data.status_id ?? 'todo',
           sort_order: data.sort_order ?? 0,
+          parent_task_id: data.parent_issue_id ?? null,
+          parent_task_sort_order: data.parent_issue_sort_order ?? null,
         })
         .then(taskToIssue);
       return { data: optimistic, persisted };
