@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::{DeploymentImpl, error::ApiError};
 
 pub mod chat;
+pub mod crew_members;
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -92,6 +93,7 @@ pub fn router() -> Router<DeploymentImpl> {
             post(link_workspace_to_task).delete(unlink_workspace_from_task),
         )
         .merge(chat::router())
+        .merge(crew_members::router())
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────
