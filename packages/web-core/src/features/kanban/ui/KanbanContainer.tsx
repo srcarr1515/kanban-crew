@@ -77,6 +77,7 @@ import { linkWorkspaceToTask } from '@/shared/lib/local/localApi';
 import type { BaseCodingAgent } from 'shared/types';
 import { MergeOnDoneDialog } from '@/shared/dialogs/kanban/MergeOnDoneDialog';
 import { ResumeWorkDialog } from '@/shared/dialogs/kanban/ResumeWorkDialog';
+import { SubTaskWorkspaceDialog } from '@/shared/dialogs/kanban/SubTaskWorkspaceDialog';
 import { createLocalTask, listLocalProjects, updateLocalProject } from '@/shared/lib/local/localApi';
 import { ConfirmDialog } from '@/shared/dialogs/shared/ConfirmDialog';
 import { toast } from 'sonner';
@@ -744,6 +745,98 @@ export function KanbanContainer() {
     [issues, issuesById, updateIssue, getWorkspacesForIssue, triggerAutoCreate, projectId, queryClient]
   );
 
+  // When a sub-task is dragged to "in_progress", ask whether to reuse the
+  // parent's workspace or create a new one.
+  // Returns true if handled (dialog shown), false to fall through to normal auto-create.
+  const triggerSubTaskWorkspace = useCallback(
+    async (issueId: string): Promise<boolean> => {
+      const issue = issuesById.get(issueId);
+      if (!issue?.parent_issue_id) return false;
+
+      // Find the parent's workspace
+      const parentWorkspaces = getWorkspacesForIssue(issue.parent_issue_id);
+      const parentWs = parentWorkspaces[0];
+      if (!parentWs?.local_workspace_id) return false;
+
+      const parentIssue = issuesById.get(issue.parent_issue_id);
+
+      let workspaceName: string;
+      try {
+        const ws = await workspacesApi.get(parentWs.local_workspace_id);
+        workspaceName = ws.name || ws.branch || 'parent workspace';
+      } catch {
+        workspaceName = 'parent workspace';
+      }
+
+      const result = await SubTaskWorkspaceDialog.show({
+        subTaskTitle: issue.title,
+        parentTitle: parentIssue?.title ?? 'Parent task',
+        parentWorkspaceName: workspaceName,
+      });
+
+      if (result === 'cancel') {
+        // Revert to previous status
+        updateIssue(issueId, { status_id: issue.status_id });
+        return true;
+      }
+
+      if (result === 'reuse') {
+        const parentWsId = parentWs.local_workspace_id;
+        try {
+          await linkWorkspaceToTask(issueId, parentWsId);
+
+          // Transition parent to in_review
+          if (issue.parent_issue_id) {
+            updateIssue(issue.parent_issue_id, { status_id: 'in_review' });
+          }
+
+          // Send follow-up prompt
+          const sessions = await sessionsApi.getByWorkspace(parentWsId);
+          const session = sessions[0];
+          if (session) {
+            const systemInfo = await configApi.getConfig();
+            const executors = systemInfo.executors ?? {};
+            const executorKeys = Object.keys(executors);
+            const savedExecutor = getAutoCreateExecutor(projectId);
+            const executorName =
+              (savedExecutor && executorKeys.includes(savedExecutor)
+                ? savedExecutor
+                : null) ??
+              (executorKeys.includes('CLAUDE_CODE') ? 'CLAUDE_CODE' : null) ??
+              executorKeys[0];
+
+            if (executorName) {
+              const description = issue.description ?? '';
+              const prompt = description
+                ? `Work on this sub-task: ${issue.title}\n\n${description}`
+                : `Work on this sub-task: ${issue.title}`;
+
+              await sessionsApi.followUp(session.id, {
+                prompt,
+                executor_config: {
+                  executor: executorName as BaseCodingAgent,
+                },
+                retry_process_id: null,
+                force_when_dirty: null,
+                perform_git_reset: null,
+              });
+            }
+          }
+
+          queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+          queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
+        } catch (err) {
+          console.error('[SubTaskWorkspace] Failed to reuse parent workspace:', err);
+        }
+        return true;
+      }
+
+      // result === 'new' — fall through to normal auto-create
+      return false;
+    },
+    [issuesById, getWorkspacesForIssue, updateIssue, projectId, queryClient]
+  );
+
   // Check for unmerged branches when moving a task to "done" from "in_review"
   const triggerMergeOnDone = useCallback(
     async (issueId: string) => {
@@ -1060,14 +1153,16 @@ export function KanbanContainer() {
             const id = movedIssueId;
             // Auto-create workspace when task is dragged to "in_progress"
             if (destId === 'in_progress') {
-              // If parent has sub-tasks, show resume dialog first
+              // Chain: parent with sub-tasks → sub-task reuse → default auto-create
               triggerResumeWork(id).then((handled) => {
-                if (!handled) {
+                if (handled) return;
+                return triggerSubTaskWorkspace(id).then((subHandled) => {
+                  if (subHandled) return;
                   const issue = issuesById.get(id);
                   const hasWorkspaces =
                     getWorkspacesForIssue(id).length > 0;
                   triggerAutoCreate(id, issue, hasWorkspaces);
-                }
+                });
               });
             }
             // Prompt merge when task is dragged from "in_review" to "done"
@@ -1095,6 +1190,7 @@ export function KanbanContainer() {
       getWorkspacesForIssue,
       triggerAutoCreate,
       triggerResumeWork,
+      triggerSubTaskWorkspace,
       triggerMergeOnDone,
     ]
   );

@@ -707,11 +707,27 @@ impl LocalContainerService {
         executor_config: &ExecutorConfig,
         description: Option<&str>,
     ) -> Result<bool, ContainerError> {
-        // Find the parent task's workspace (most recent, non-archived)
-        let parent_workspaces = Workspace::find_by_task_id(&self.db.pool, parent_task_id).await?;
-        let parent_workspace = match parent_workspaces
-            .into_iter()
-            .find(|ws| !ws.archived)
+        // Find the workspace originally created for the parent task. After sub-task
+        // reuse, the workspace's task_id points at the last sub-task (not the parent),
+        // so we search for workspaces linked to the parent OR any of its sub-tasks.
+        let parent_workspace = match sqlx::query_as::<_, Workspace>(
+            r#"SELECT w.id, w.task_id, w.container_ref, w.branch, w.setup_completed_at,
+                      w.created_at, w.updated_at, w.archived, w.pinned, w.name, w.worktree_deleted
+               FROM workspaces w
+               WHERE w.archived = 0
+                 AND (
+                   w.task_id = ?
+                   OR w.task_id IN (
+                     SELECT t.id FROM tasks t WHERE t.parent_task_id = ?
+                   )
+                 )
+               ORDER BY w.created_at DESC
+               LIMIT 1"#,
+        )
+        .bind(parent_task_id)
+        .bind(parent_task_id)
+        .fetch_optional(&self.db.pool)
+        .await?
         {
             Some(ws) => ws,
             None => return Ok(false),

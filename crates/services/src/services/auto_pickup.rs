@@ -239,12 +239,25 @@ pub async fn try_select_next_task(
         return Ok(None);
     }
 
-    // Priority 1: Check for ready sub-tasks of the just-completed task
-    let sub_tasks = find_ready_subtasks(pool, workspace_task_id).await?;
+    // If the completed task is itself a sub-task, look for sibling sub-tasks
+    // under the same parent. Otherwise, look for sub-tasks of the completed task.
+    let parent_task_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT parent_task_id FROM tasks WHERE id = ?")
+            .bind(workspace_task_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(AutoPickupError::Db)?
+            .flatten();
+
+    let subtask_parent = parent_task_id.unwrap_or(workspace_task_id);
+
+    // Priority 1: Check for ready sub-tasks (siblings if completed task is a sub-task,
+    // children if completed task is a parent)
+    let sub_tasks = find_ready_subtasks(pool, subtask_parent).await?;
 
     let candidate_tasks = if !sub_tasks.is_empty() {
         tracing::debug!(
-            "Auto-pickup: found {} ready sub-task(s) of completed task {workspace_task_id}",
+            "Auto-pickup: found {} ready sub-task(s) of parent {subtask_parent}",
             sub_tasks.len()
         );
         sub_tasks

@@ -63,6 +63,7 @@ export function LocalProjectProvider({
     queryKey: workspacesQueryKey,
     queryFn: () => workspacesApi.getAllWorkspaces(),
     enabled: Boolean(projectId),
+    refetchInterval: 3000,
   });
 
   const taskIds = useMemo(
@@ -221,6 +222,25 @@ export function LocalProjectProvider({
     return map;
   }, [statuses]);
 
+  // Build a map of parentId → Set<childId> for workspace lookup.
+  // When looking up workspaces for a parent issue, we also need to find
+  // workspaces currently linked to any of its sub-tasks (since workspace
+  // task_id gets re-linked as sub-tasks are worked on).
+  const childIdsByParent = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const task of tasksQuery.data ?? []) {
+      if (task.parent_task_id) {
+        let children = map.get(task.parent_task_id);
+        if (!children) {
+          children = new Set();
+          map.set(task.parent_task_id, children);
+        }
+        children.add(task.id);
+      }
+    }
+    return map;
+  }, [tasksQuery.data]);
+
   const getIssue = useCallback(
     (id: string) => issuesById.get(id),
     [issuesById]
@@ -365,8 +385,16 @@ export function LocalProjectProvider({
       getStatus,
       getTag: () => undefined,
       getPullRequestsForIssue: () => [],
-      getWorkspacesForIssue: (issueId: string) =>
-        workspaces.filter((w) => w.issue_id === issueId),
+      getWorkspacesForIssue: (issueId: string) => {
+        // Match workspaces linked to this issue directly, OR linked to any
+        // of its sub-tasks (workspace task_id gets re-linked during sub-task work).
+        const childIds = childIdsByParent.get(issueId);
+        return workspaces.filter(
+          (w) =>
+            w.issue_id === issueId ||
+            (childIds != null && w.issue_id != null && childIds.has(w.issue_id)),
+        );
+      },
 
       // Computed maps
       issuesById,
@@ -391,6 +419,7 @@ export function LocalProjectProvider({
       getStatus,
       issuesById,
       statusesById,
+      childIdsByParent,
       onBulkStatusUpdate,
       stubMutation,
     ]
