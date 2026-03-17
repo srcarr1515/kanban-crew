@@ -2,6 +2,8 @@ import { useState, useCallback, useMemo, useRef, useEffect } from 'react';
 import { create, useModal } from '@ebay/nice-modal-react';
 import { defineModal } from '@/shared/lib/modals';
 import { ProjectProvider } from '@/shared/providers/remote/ProjectProvider';
+import { LocalProjectProvider } from '@/shared/providers/local/LocalProjectProvider';
+import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { CommandDialog } from '@vibe/ui/components/Command';
 import {
@@ -74,6 +76,7 @@ function ProjectSelectionContent({ selection }: { selection: SelectionMode }) {
   const [search, setSearch] = useState('');
   const [currentPageId, setCurrentPageId] = useState(initialPageId);
   const [pageStack, setPageStack] = useState<string[]>([]);
+  const [linkedIds, setLinkedIds] = useState<Set<string>>(new Set());
 
   // Capture focus on mount
   if (!previousFocusRef.current && modal.visible) {
@@ -85,6 +88,7 @@ function ProjectSelectionContent({ selection }: { selection: SelectionMode }) {
     setCurrentPageId(initialPageId);
     setPageStack([]);
     setSearch('');
+    setLinkedIds(new Set());
   }, [initialPageId]);
 
   const sortedStatuses: StatusItem[] = useMemo(
@@ -138,6 +142,7 @@ function ProjectSelectionContent({ selection }: { selection: SelectionMode }) {
         if (issue.id === parentIssueId) return false;
         if (issue.parent_issue_id === parentIssueId) return false;
         if (ancestorIds.has(issue.id)) return false;
+        if (linkedIds.has(issue.id)) return false;
         return true;
       });
     } else {
@@ -146,10 +151,11 @@ function ProjectSelectionContent({ selection }: { selection: SelectionMode }) {
         if (issue.id === parentIssueId) return false;
         if (anchorIssue?.parent_issue_id === issue.id) return false;
         if (descendantIds.has(issue.id)) return false;
+        if (linkedIds.has(issue.id)) return false;
         return true;
       });
     }
-  }, [issues, selection]);
+  }, [issues, selection, linkedIds]);
 
   // Build filtered issue list for relationship selection
   const filteredIssuesForRelationship = useMemo((): Issue[] => {
@@ -266,6 +272,18 @@ function ProjectSelectionContent({ selection }: { selection: SelectionMode }) {
     (item: CommandBarGroupItem<ActionDefinition, PageId>) => {
       const result = currentPage.onSelect(item as ResolvedGroupItem);
       if (result.type === 'complete') {
+        // For sub-issue addChild selections, stay open so the user can link multiple
+        const subResult = result.data as SubIssueSelectionResult | undefined;
+        if (
+          selection.type === 'subIssue' &&
+          selection.mode === 'addChild' &&
+          subResult?.type === 'selected'
+        ) {
+          handleResult(result.data);
+          setLinkedIds((prev) => new Set(prev).add(subResult.issueId));
+          setSearch('');
+          return;
+        }
         handleResult(result.data);
         modal.resolve(result.data);
         modal.hide();
@@ -275,7 +293,7 @@ function ProjectSelectionContent({ selection }: { selection: SelectionMode }) {
         setSearch('');
       }
     },
-    [currentPage, modal, handleResult]
+    [currentPage, modal, handleResult, selection]
   );
 
   const handleGoBack = useCallback(() => {
@@ -327,10 +345,11 @@ function ProjectSelectionContent({ selection }: { selection: SelectionMode }) {
 
 const ProjectSelectionDialogImpl = create<ProjectSelectionDialogProps>(
   ({ projectId, selection }) => {
+    const Provider = IS_LOCAL_MODE ? LocalProjectProvider : ProjectProvider;
     return (
-      <ProjectProvider projectId={projectId}>
+      <Provider projectId={projectId}>
         <ProjectSelectionContent selection={selection} />
-      </ProjectProvider>
+      </Provider>
     );
   }
 );

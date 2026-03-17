@@ -27,6 +27,7 @@ import {
   type BulkUpdateIssueItem,
 } from '@/shared/lib/remoteApi';
 import { PlusIcon, DotsThreeIcon } from '@phosphor-icons/react';
+import { StatusIcon } from '@vibe/ui/components/StatusIcon';
 import { Actions } from '@/shared/actions';
 import {
   buildKanbanIssueComposerKey,
@@ -69,9 +70,13 @@ import type { IssuePriority } from 'shared/remote-types';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import { useAutoCreateWorkspace } from '@/shared/hooks/useAutoCreateWorkspace';
 import { DefaultRepoDialog } from '@/shared/components/DefaultRepoDialog';
-import { workspacesApi } from '@/shared/lib/api';
+import { workspacesApi, sessionsApi, configApi } from '@/shared/lib/api';
 import { ApiError } from '@/shared/lib/api';
+import { getAutoCreateExecutor } from '@/shared/components/DefaultRepoDialog';
+import { linkWorkspaceToTask } from '@/shared/lib/local/localApi';
+import type { BaseCodingAgent } from 'shared/types';
 import { MergeOnDoneDialog } from '@/shared/dialogs/kanban/MergeOnDoneDialog';
+import { ResumeWorkDialog } from '@/shared/dialogs/kanban/ResumeWorkDialog';
 import { createLocalTask, listLocalProjects, updateLocalProject } from '@/shared/lib/local/localApi';
 import { ConfirmDialog } from '@/shared/dialogs/shared/ConfirmDialog';
 import { toast } from 'sonner';
@@ -147,6 +152,7 @@ export function KanbanContainer() {
     insertIssueTag,
     removeIssueTag,
     insertTag,
+    updateIssue,
     pullRequests,
     isLoading: projectLoading,
     onBulkStatusUpdate,
@@ -641,6 +647,103 @@ export function KanbanContainer() {
     [statusColumnIndexMap]
   );
 
+  // When a parent ticket with sub-tasks is dragged to "in_progress", let the
+  // user choose which sub-task the agent should work on first.
+  const triggerResumeWork = useCallback(
+    async (issueId: string): Promise<boolean> => {
+      const issue = issuesById.get(issueId);
+      if (!issue) return false;
+
+      const subTasks = issues.filter((i) => i.parent_issue_id === issueId);
+      if (subTasks.length === 0) return false;
+
+      const result = await ResumeWorkDialog.show({
+        parentTitle: issue.title,
+        subTasks: subTasks.map((t) => ({
+          id: t.id,
+          title: t.title,
+          status: t.status_id,
+        })),
+      });
+
+      if (result.type === 'cancel') {
+        // Revert parent back to previous status
+        updateIssue(issueId, { status_id: issue.status_id });
+        return true; // handled — don't auto-create
+      }
+
+      if (result.type === 'subtask') {
+        const subTask = issuesById.get(result.subtaskId);
+        // Check if parent already has a workspace we can reuse
+        const parentWorkspaces = getWorkspacesForIssue(issueId);
+        const parentWsId = parentWorkspaces[0]?.local_workspace_id;
+
+        if (parentWsId) {
+          // Reuse the parent's workspace: re-link to sub-task and send follow-up
+          try {
+            // Re-link workspace to the sub-task
+            await linkWorkspaceToTask(result.subtaskId, parentWsId);
+
+            // Move sub-task to in_progress, parent to in_review
+            updateIssue(result.subtaskId, { status_id: 'in_progress' });
+            updateIssue(issueId, { status_id: 'in_review' });
+
+            // Get the session for follow-up
+            const sessions = await sessionsApi.getByWorkspace(parentWsId);
+            const session = sessions[0];
+            if (session) {
+              // Resolve executor config
+              const systemInfo = await configApi.getConfig();
+              const executors = systemInfo.executors ?? {};
+              const executorKeys = Object.keys(executors);
+              const savedExecutor = getAutoCreateExecutor(projectId);
+              const executorName =
+                (savedExecutor && executorKeys.includes(savedExecutor)
+                  ? savedExecutor
+                  : null) ??
+                (executorKeys.includes('CLAUDE_CODE') ? 'CLAUDE_CODE' : null) ??
+                executorKeys[0];
+
+              if (executorName) {
+                const title = subTask?.title ?? 'Untitled sub-task';
+                const description = subTask?.description ?? '';
+                const prompt = description
+                  ? `Work on this sub-task: ${title}\n\n${description}`
+                  : `Work on this sub-task: ${title}`;
+
+                await sessionsApi.followUp(session.id, {
+                  prompt,
+                  executor_config: {
+                    executor: executorName as BaseCodingAgent,
+                  },
+                  retry_process_id: null,
+                  force_when_dirty: null,
+                  perform_git_reset: null,
+                });
+              }
+            }
+
+            queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+            queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
+          } catch (err) {
+            console.error('[ResumeWork] Failed to reuse parent workspace:', err);
+          }
+        } else {
+          // No parent workspace — create a new one for the sub-task
+          updateIssue(result.subtaskId, { status_id: 'in_progress' });
+          const hasWorkspaces =
+            getWorkspacesForIssue(result.subtaskId).length > 0;
+          triggerAutoCreate(result.subtaskId, subTask, hasWorkspaces);
+        }
+        return true; // handled — don't auto-create for parent
+      }
+
+      // result.type === 'parent' — fall through to normal auto-create
+      return false;
+    },
+    [issues, issuesById, updateIssue, getWorkspacesForIssue, triggerAutoCreate, projectId, queryClient]
+  );
+
   // Check for unmerged branches when moving a task to "done" from "in_review"
   const triggerMergeOnDone = useCallback(
     async (issueId: string) => {
@@ -932,16 +1035,22 @@ export function KanbanContainer() {
       updateFn()
         .then(() => {
           if (IS_LOCAL_MODE && isCrossColumn && movedIssueId) {
+            const id = movedIssueId;
             // Auto-create workspace when task is dragged to "in_progress"
             if (destId === 'in_progress') {
-              const issue = issuesById.get(movedIssueId);
-              const hasWorkspaces =
-                getWorkspacesForIssue(movedIssueId).length > 0;
-              triggerAutoCreate(movedIssueId, issue, hasWorkspaces);
+              // If parent has sub-tasks, show resume dialog first
+              triggerResumeWork(id).then((handled) => {
+                if (!handled) {
+                  const issue = issuesById.get(id);
+                  const hasWorkspaces =
+                    getWorkspacesForIssue(id).length > 0;
+                  triggerAutoCreate(id, issue, hasWorkspaces);
+                }
+              });
             }
             // Prompt merge when task is dragged from "in_review" to "done"
             if (sourceId === 'in_review' && destId === 'done') {
-              triggerMergeOnDone(movedIssueId);
+              triggerMergeOnDone(id);
             }
           }
         })
@@ -963,6 +1072,7 @@ export function KanbanContainer() {
       issuesById,
       getWorkspacesForIssue,
       triggerAutoCreate,
+      triggerResumeWork,
       triggerMergeOnDone,
     ]
   );
@@ -1169,10 +1279,7 @@ export function KanbanContainer() {
                     <KanbanHeader>
                       <div className="border-t sticky border-b top-0 z-20 flex shrink-0 items-center justify-between gap-2 p-base bg-secondary">
                         <div className="flex items-center gap-2">
-                          <div
-                            className="h-2 w-2 rounded-full shrink-0"
-                            style={{ backgroundColor: `hsl(${status.color})` }}
-                          />
+                          <StatusIcon statusId={status.id} size="sm" />
                           <p className="m-0 text-sm">{status.name}</p>
                         </div>
                         <button

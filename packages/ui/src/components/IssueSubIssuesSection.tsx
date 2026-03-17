@@ -14,6 +14,7 @@ export interface SubIssueData {
   title: string;
   priority: PriorityLevel | null;
   statusColor: string;
+  statusId?: string;
   assignees: KanbanAssigneeUser[];
   createdAt: string;
   parentIssueSortOrder: number | null;
@@ -83,6 +84,7 @@ export function IssueSubIssuesSection({
                   title={subIssue.title}
                   priority={subIssue.priority}
                   statusColor={subIssue.statusColor}
+                  statusId={subIssue.statusId}
                   assignees={subIssue.assignees}
                   createdAt={subIssue.createdAt}
                   onClick={() => onSubIssueClick(subIssue.id)}

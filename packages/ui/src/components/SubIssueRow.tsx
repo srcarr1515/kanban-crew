@@ -10,7 +10,7 @@ import {
 } from '@phosphor-icons/react';
 import { cn } from '../lib/cn';
 import { PriorityIcon, type PriorityLevel } from './PriorityIcon';
-import { StatusDot } from './StatusDot';
+import { StatusIcon } from './StatusIcon';
 import { KanbanAssignee, type KanbanAssigneeUser } from './KanbanAssignee';
 import { useTranslation } from 'react-i18next';
 import {
@@ -50,6 +50,7 @@ export interface SubIssueRowProps {
   title: string;
   priority: PriorityLevel | null;
   statusColor: string;
+  statusId?: string;
   assignees: KanbanAssigneeUser[];
   createdAt: string;
   onClick?: () => void;
@@ -67,6 +68,7 @@ export function SubIssueRow({
   title,
   priority,
   statusColor,
+  statusId,
   assignees,
   createdAt,
   onClick,
@@ -134,7 +136,14 @@ export function SubIssueRow({
             <span className="font-ibm-plex-mono text-sm text-normal shrink-0">
               {simpleId}
             </span>
-            <StatusDot color={statusColor} />
+            {statusId ? (
+              <StatusIcon statusId={statusId} size="xs" />
+            ) : (
+              <span
+                className="w-2 h-2 rounded-full shrink-0"
+                style={{ backgroundColor: `hsl(${statusColor})` }}
+              />
+            )}
             <span className="text-base text-high truncate">{title}</span>
           </div>
 
