@@ -10,6 +10,8 @@ import {
   SpinnerIcon,
   UserCircleIcon,
   FloppyDiskIcon,
+  TrashIcon,
+  UploadSimpleIcon,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { create, useModal } from '@ebay/nice-modal-react';
@@ -38,14 +40,6 @@ const SECTION_LABELS: Record<CrewSectionType, string> = {
 };
 
 const CREW_MEMBERS_KEY = ['local', 'crew-members'];
-
-function getInitials(name: string): string {
-  return name
-    .split(/\s+/)
-    .map((w) => w.charAt(0).toUpperCase())
-    .slice(0, 2)
-    .join('');
-}
 
 function CrewMemberEditForm({
   member,
@@ -80,8 +74,6 @@ function CrewMemberEditForm({
     }
   });
 
-  const avatarText = getInitials(name) || '?';
-
   const handleToolToggle = (serverName: string) => {
     setSelectedTools((prev) =>
       prev.includes(serverName)
@@ -103,51 +95,41 @@ function CrewMemberEditForm({
 
   return (
     <form onSubmit={handleSubmit} className="px-4 pb-4 pt-2 space-y-3">
-      {/* Avatar preview + Name + Role row */}
-      <div className="flex items-start gap-3">
-        <div
-          className={cn(
-            'flex items-center justify-center w-10 h-10 rounded-full shrink-0',
-            'bg-brand/20 text-brand text-sm font-semibold'
-          )}
-        >
-          {avatarText}
+      {/* Name + Role row */}
+      <div className="space-y-2">
+        <div>
+          <label className="block text-xs font-medium text-low mb-1">
+            Name
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={cn(
+              'w-full px-2.5 py-1.5 rounded-sm text-sm',
+              'bg-primary border border-border text-high',
+              'placeholder:text-muted',
+              'focus:outline-none focus:ring-1 focus:ring-brand'
+            )}
+            placeholder="Member name"
+          />
         </div>
-        <div className="flex-1 space-y-2">
-          <div>
-            <label className="block text-xs font-medium text-low mb-1">
-              Name
-            </label>
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className={cn(
-                'w-full px-2.5 py-1.5 rounded-sm text-sm',
-                'bg-primary border border-border text-high',
-                'placeholder:text-muted',
-                'focus:outline-none focus:ring-1 focus:ring-brand'
-              )}
-              placeholder="Member name"
-            />
-          </div>
-          <div>
-            <label className="block text-xs font-medium text-low mb-1">
-              Role
-            </label>
-            <input
-              type="text"
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              className={cn(
-                'w-full px-2.5 py-1.5 rounded-sm text-sm',
-                'bg-primary border border-border text-high',
-                'placeholder:text-muted',
-                'focus:outline-none focus:ring-1 focus:ring-brand'
-              )}
-              placeholder="e.g. Frontend Developer"
-            />
-          </div>
+        <div>
+          <label className="block text-xs font-medium text-low mb-1">
+            Role
+          </label>
+          <input
+            type="text"
+            value={role}
+            onChange={(e) => setRole(e.target.value)}
+            className={cn(
+              'w-full px-2.5 py-1.5 rounded-sm text-sm',
+              'bg-primary border border-border text-high',
+              'placeholder:text-muted',
+              'focus:outline-none focus:ring-1 focus:ring-brand'
+            )}
+            placeholder="e.g. Frontend Developer"
+          />
         </div>
       </div>
 
@@ -243,6 +225,124 @@ function CrewMemberEditForm({
   );
 }
 
+function AvatarModal({
+  member,
+  onUpload,
+  onRemove,
+  onClose,
+}: {
+  member: CrewMember;
+  onUpload: (dataUrl: string) => void;
+  onRemove: () => void;
+  onClose: () => void;
+}) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  const isImageAvatar =
+    member.avatar?.startsWith('data:') || member.avatar?.startsWith('http');
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    const handleEscape = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [onClose]);
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      onUpload(reader.result as string);
+      onClose();
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+  };
+
+  return (
+    <div
+      ref={modalRef}
+      className={cn(
+        'absolute top-full left-0 mt-1 z-50',
+        'bg-panel border border-border rounded-sm shadow-lg',
+        'min-w-[160px] py-1'
+      )}
+    >
+      {/* Preview */}
+      <div className="flex items-center justify-center px-4 py-3">
+        <div
+          className={cn(
+            'flex items-center justify-center w-16 h-16 rounded-full overflow-hidden',
+            'bg-brand/20 text-brand text-xl font-semibold'
+          )}
+        >
+          {isImageAvatar ? (
+            <img
+              src={member.avatar}
+              alt={member.name}
+              className="w-full h-full object-cover"
+            />
+          ) : (
+            member.avatar || member.name.charAt(0).toUpperCase()
+          )}
+        </div>
+      </div>
+
+      <div className="border-t border-border" />
+
+      {/* Upload */}
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        className={cn(
+          'flex items-center gap-2 w-full px-3 py-2 text-sm text-normal',
+          'hover:bg-primary/10 transition-colors cursor-pointer'
+        )}
+      >
+        <UploadSimpleIcon className="size-4" weight="bold" />
+        Upload image
+      </button>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+
+      {/* Remove — only if there's an image */}
+      {isImageAvatar && (
+        <button
+          type="button"
+          onClick={() => {
+            onRemove();
+            onClose();
+          }}
+          className={cn(
+            'flex items-center gap-2 w-full px-3 py-2 text-sm text-destructive',
+            'hover:bg-destructive/10 transition-colors cursor-pointer'
+          )}
+        >
+          <TrashIcon className="size-4" weight="bold" />
+          Remove image
+        </button>
+      )}
+    </div>
+  );
+}
+
 function CrewMemberCard({
   member,
   isExpanded,
@@ -266,11 +366,14 @@ function CrewMemberCard({
       role_prompt?: string;
       tool_access?: unknown[];
       personality?: string;
+      avatar?: string;
     }
   ) => void;
   isSaving: boolean;
   mcpServerNames: string[];
 }) {
+  const [showAvatarModal, setShowAvatarModal] = useState(false);
+
   const handleDismiss = async (e: React.MouseEvent) => {
     e.stopPropagation();
     const result = await ConfirmDialog.show({
@@ -285,50 +388,90 @@ function CrewMemberCard({
     }
   };
 
+  const handleAvatarClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setShowAvatarModal((prev) => !prev);
+  };
+
+  const isImageAvatar =
+    member.avatar?.startsWith('data:') || member.avatar?.startsWith('http');
+
   return (
     <div
       className={cn(
-        'rounded-sm border border-border overflow-hidden',
+        'rounded-sm border border-border',
         isExpanded ? 'bg-secondary' : 'bg-secondary'
       )}
     >
-      {/* Card header — clickable to toggle */}
-      <button
-        type="button"
-        onClick={onToggleExpand}
+      {/* Card header */}
+      <div
         className={cn(
-          'relative flex items-center gap-3 px-4 py-3 w-full text-left',
-          'hover:bg-primary/5 transition-colors cursor-pointer'
+          'relative flex items-start gap-3 px-4 py-3 w-full',
+          'hover:bg-primary/5 transition-colors'
         )}
       >
-        {/* Avatar */}
-        <div
-          className={cn(
-            'flex items-center justify-center w-9 h-9 rounded-full shrink-0',
-            'bg-brand/20 text-brand text-sm font-medium'
+        {/* Avatar — clickable to open avatar modal */}
+        <div className="relative shrink-0">
+          <div
+            role="button"
+            tabIndex={-1}
+            onClick={handleAvatarClick}
+            className={cn(
+              'flex items-center justify-center w-9 h-9 rounded-full overflow-hidden',
+              'bg-brand/20 text-brand text-sm font-medium',
+              'hover:ring-2 hover:ring-brand/40 transition-all cursor-pointer'
+            )}
+            title="Change avatar"
+          >
+            {isImageAvatar ? (
+              <img
+                src={member.avatar}
+                alt={member.name}
+                className="w-full h-full object-cover"
+              />
+            ) : (
+              member.avatar || member.name.charAt(0).toUpperCase()
+            )}
+          </div>
+          {showAvatarModal && (
+            <AvatarModal
+              member={member}
+              onUpload={(dataUrl) => onSave(member.id, { avatar: dataUrl })}
+              onRemove={() => {
+                const initials = member.name.charAt(0).toUpperCase();
+                onSave(member.id, { avatar: initials });
+              }}
+              onClose={() => setShowAvatarModal(false)}
+            />
           )}
-        >
-          {member.avatar || member.name.charAt(0).toUpperCase()}
         </div>
 
-        {/* Name and role */}
-        <div className="flex-1 min-w-0">
+        {/* Name and role — clickable to toggle expand */}
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="flex-1 min-w-0 text-left cursor-pointer"
+        >
           <p className="text-sm font-medium text-high truncate">
             {member.name}
           </p>
           <p className="text-xs text-low truncate">{member.role}</p>
-        </div>
+        </button>
 
-        {/* Expand/collapse indicator */}
-        <div className="shrink-0 text-low">
+        {/* Expand/collapse indicator — bottom-aligned */}
+        <button
+          type="button"
+          onClick={onToggleExpand}
+          className="shrink-0 text-low self-end cursor-pointer"
+        >
           {isExpanded ? (
             <CaretUpIcon className="size-3.5" weight="bold" />
           ) : (
             <CaretDownIcon className="size-3.5" weight="bold" />
           )}
-        </div>
+        </button>
 
-        {/* Dismiss button - top-right corner */}
+        {/* Delete button - top-right corner */}
         <div
           role="button"
           tabIndex={-1}
@@ -341,9 +484,9 @@ function CrewMemberCard({
           )}
           aria-label={`Remove ${member.name}`}
         >
-          <XIcon className="size-3.5" weight="bold" />
+          <TrashIcon className="size-3.5" weight="bold" />
         </div>
-      </button>
+      </div>
 
       {/* Expanded inline edit form */}
       {isExpanded && (
@@ -367,6 +510,7 @@ function MembersSection() {
   const { data: members = [], isLoading } = useQuery({
     queryKey: CREW_MEMBERS_KEY,
     queryFn: listCrewMembers,
+    staleTime: 30_000, // Reuse cached data for 30s to avoid spinner flash on reopen
   });
 
   // Load MCP server names for tool access multi-select
@@ -382,6 +526,7 @@ function MembersSection() {
         return [];
       }
     },
+    staleTime: 60_000,
   });
 
   const addMutation = useMutation({
@@ -404,6 +549,7 @@ function MembersSection() {
         role_prompt?: string;
         tool_access?: unknown[];
         personality?: string;
+        avatar?: string;
       };
     }) => updateCrewMember(id, changes),
     onSuccess: () => {
@@ -435,6 +581,7 @@ function MembersSection() {
       role_prompt?: string;
       tool_access?: unknown[];
       personality?: string;
+      avatar?: string;
     }
   ) => {
     updateMutation.mutate({ id, changes });

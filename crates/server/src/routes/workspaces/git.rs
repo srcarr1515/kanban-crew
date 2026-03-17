@@ -220,6 +220,14 @@ pub async fn merge_workspace(
     let workspace_path = Path::new(&container_ref);
     let worktree_path = workspace_path.join(&repo.name);
 
+    // Clean up any stale rebase/merge/cherry-pick state from previous attempts.
+    if let Err(e) = deployment.git().abort_conflicts(&worktree_path) {
+        tracing::warn!(
+            "merge_workspace: failed to abort stale conflicts in '{}': {}",
+            repo.name, e
+        );
+    }
+
     // Failsafe: auto-commit any uncommitted changes before merging.
     // This prevents merge/rebase failures when the agent left uncommitted work.
     match deployment.git().commit(&worktree_path, "wip: uncommitted changes before merge") {
@@ -328,12 +336,27 @@ pub async fn merge_workspace(
         Err(other) => return Err(ApiError::GitService(other)),
     };
 
-    // Transition linked task to done on successful merge
+    // Transition linked task + parent + all sibling sub-tasks to done on
+    // successful merge.  The branch is finalized so all related work is complete.
     if let Some(task_id) = workspace.task_id {
+        // Find the parent task id (if this task is a sub-task)
+        let parent_id: Option<uuid::Uuid> =
+            sqlx::query_scalar("SELECT parent_task_id FROM tasks WHERE id = ?")
+                .bind(task_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+
+        // The "root" is the parent if this is a sub-task, otherwise the task itself
+        let root_id = parent_id.unwrap_or(task_id);
+
+        // Set the root task and all its sub-tasks to done
         let _ = sqlx::query(
-            "UPDATE tasks SET status = 'done', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'in_progress', 'in_review')",
+            "UPDATE tasks SET status = 'done', updated_at = datetime('now', 'subsec') WHERE (id = ? OR parent_task_id = ?) AND status IN ('todo', 'ready', 'in_progress', 'in_review')",
         )
-        .bind(task_id)
+        .bind(root_id)
+        .bind(root_id)
         .execute(pool)
         .await;
     }
@@ -855,6 +878,14 @@ pub async fn rebase_workspace(
         .await?;
     let workspace_path = Path::new(&container_ref);
     let worktree_path = workspace_path.join(&repo.name);
+
+    // Clean up any stale rebase/merge/cherry-pick state from previous attempts.
+    if let Err(e) = deployment.git().abort_conflicts(&worktree_path) {
+        tracing::warn!(
+            "rebase_workspace: failed to abort stale conflicts in '{}': {}",
+            repo.name, e
+        );
+    }
 
     // Failsafe: auto-commit any uncommitted changes before rebasing.
     // This prevents rebase failures when the agent left uncommitted work.

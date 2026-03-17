@@ -837,8 +837,46 @@ export function KanbanContainer() {
 
   // Perform the actual merge operation for a workspace, handling conflicts and rebase.
   // Returns true if merge succeeded, false if it failed (caller should revert statuses).
+  // Helper: prompt user to create a conflict-resolution subtask under the parent task.
+  const promptConflictSubtask = useCallback(
+    async (
+      title: string,
+      dialogTitle: string,
+      dialogMessage: string,
+      description: string,
+      parentTaskId: string,
+    ) => {
+      const confirmCreate = await ConfirmDialog.show({
+        title: dialogTitle,
+        message: dialogMessage,
+        confirmText: 'Create Task',
+        cancelText: 'Skip',
+      });
+      if (confirmCreate === 'confirmed') {
+        try {
+          const projects = await listLocalProjects();
+          if (projects.length > 0) {
+            await createLocalTask({
+              project_id: projects[0]!.id,
+              title,
+              description,
+              status: 'todo',
+              parent_task_id: parentTaskId,
+            });
+            toast.success('Conflict resolution task created');
+            queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+          }
+        } catch (taskErr) {
+          console.error('Failed to create conflict task:', taskErr);
+          toast.error('Failed to create conflict task');
+        }
+      }
+    },
+    [queryClient],
+  );
+
   const performMerge = useCallback(
-    async (localWsId: string, workspace: { name: string | null; branch: string }, unmergedRepos: { repo_id: string; repo_name: string; target_branch_name: string }[]): Promise<boolean> => {
+    async (localWsId: string, workspace: { name: string | null; branch: string }, unmergedRepos: { repo_id: string; repo_name: string; target_branch_name: string }[], parentTaskId: string): Promise<boolean> => {
       let allSucceeded = true;
 
       for (const repo of unmergedRepos) {
@@ -863,32 +901,20 @@ export function KanbanContainer() {
             };
             const fileList = conflictData.conflicted_files.slice(0, 10);
             const moreCount = Math.max(0, conflictData.conflicted_files.length - 10);
-            const confirmCreate = await ConfirmDialog.show({
-              title: 'Merge Conflicts Detected',
-              message: `Cannot merge "${workspace.branch}" into "${conflictData.target_branch}" — conflicts in:\n\n${fileList.map((f) => `  • ${f}`).join('\n')}${moreCount > 0 ? `\n  ...and ${moreCount} more` : ''}\n\nCreate a task to resolve these conflicts?`,
-              confirmText: 'Create Task',
-              cancelText: 'Skip',
-            });
-            if (confirmCreate === 'confirmed') {
-              try {
-                const projects = await listLocalProjects();
-                if (projects.length > 0) {
-                  await createLocalTask({
-                    project_id: projects[0]!.id,
-                    title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
-                    description: `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts directly on the ${conflictData.target_branch} branch.`,
-                    status: 'in_progress',
-                  });
-                }
-              } catch (taskErr) {
-                console.error('Failed to create conflict task:', taskErr);
-              }
-            }
+            await promptConflictSubtask(
+              `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
+              'Merge Conflicts Detected',
+              `Cannot merge "${workspace.branch}" into "${conflictData.target_branch}" — conflicts in:\n\n${fileList.map((f) => `  • ${f}`).join('\n')}${moreCount > 0 ? `\n  ...and ${moreCount} more` : ''}\n\nCreate a sub-task to resolve these conflicts?`,
+              `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts and then merge the branch.`,
+              parentTaskId,
+            );
           } else if (
             err instanceof ApiError &&
             (err.message?.includes('commits ahead') || err.status === 409)
           ) {
             // Branch diverged — try rebase then merge
+            // (This path should rarely trigger now that the backend auto-rebases,
+            // but kept as a fallback for edge cases.)
             try {
               const rebaseResult = await workspacesApi.rebase(localWsId, {
                 repo_id: repo.repo_id,
@@ -914,23 +940,13 @@ export function KanbanContainer() {
                       conflicted_files: string[];
                       target_branch: string;
                     };
-                    const confirmCreate = await ConfirmDialog.show({
-                      title: 'Merge Conflicts After Rebase',
-                      message: `Rebased successfully but merge has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
-                      confirmText: 'Create Task',
-                      cancelText: 'Skip',
-                    });
-                    if (confirmCreate === 'confirmed') {
-                      const projects = await listLocalProjects();
-                      if (projects.length > 0) {
-                        await createLocalTask({
-                          project_id: projects[0]!.id,
-                          title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
-                          description: `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts after rebase.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts directly on the ${conflictData.target_branch} branch.`,
-                          status: 'in_progress',
-                        });
-                      }
-                    }
+                    await promptConflictSubtask(
+                      `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
+                      'Merge Conflicts After Rebase',
+                      `Rebased successfully but merge has conflicts in ${conflictData.conflicted_files.length} file(s). Create a sub-task to resolve them?`,
+                      `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts after rebase.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts and then merge the branch.`,
+                      parentTaskId,
+                    );
                   } else {
                     toast.error('Merge failed after rebase');
                     console.error('Merge failed after rebase:', retryErr);
@@ -950,23 +966,13 @@ export function KanbanContainer() {
                     conflicted_files: string[];
                     target_branch: string;
                   };
-                  const confirmCreate = await ConfirmDialog.show({
-                    title: 'Rebase Conflicts',
-                    message: `Your branch "${workspace.branch}" has conflicts with the target branch that need to be resolved before merging.\n\n${conflictData.conflicted_files.length} conflicting file(s):\n${conflictData.conflicted_files.slice(0, 5).map((f) => `  • ${f}`).join('\n')}${conflictData.conflicted_files.length > 5 ? `\n  ...and ${conflictData.conflicted_files.length - 5} more` : ''}\n\nCreate a task to resolve these?`,
-                    confirmText: 'Create Task',
-                    cancelText: 'Skip',
-                  });
-                  if (confirmCreate === 'confirmed') {
-                    const projects = await listLocalProjects();
-                    if (projects.length > 0) {
-                      await createLocalTask({
-                        project_id: projects[0]!.id,
-                        title: `Resolve rebase conflicts: ${workspace.name || workspace.branch}`,
-                        description: `Rebase of branch "${workspace.branch}" onto "${conflictData.target_branch ?? repo.target_branch_name}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts and complete the merge manually.`,
-                        status: 'in_progress',
-                      });
-                    }
-                  }
+                  await promptConflictSubtask(
+                    `Resolve rebase conflicts: ${workspace.name || workspace.branch}`,
+                    'Rebase Conflicts',
+                    `Your branch "${workspace.branch}" has conflicts with the target branch that need to be resolved before merging.\n\n${conflictData.conflicted_files.length} conflicting file(s):\n${conflictData.conflicted_files.slice(0, 5).map((f) => `  • ${f}`).join('\n')}${conflictData.conflicted_files.length > 5 ? `\n  ...and ${conflictData.conflicted_files.length - 5} more` : ''}\n\nCreate a sub-task to resolve these?`,
+                    `Rebase of branch "${workspace.branch}" onto "${conflictData.target_branch ?? repo.target_branch_name}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts and complete the merge manually.`,
+                    parentTaskId,
+                  );
                 } else {
                   // No conflict details — show the API message which usually
                   // explains the issue (e.g. uncommitted changes)
@@ -998,7 +1004,7 @@ export function KanbanContainer() {
       queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
       return allSucceeded;
     },
-    [queryClient]
+    [queryClient, promptConflictSubtask]
   );
 
   // Check for unmerged branches when moving a task to "done" from "in_review"
@@ -1061,7 +1067,7 @@ export function KanbanContainer() {
           }
 
           if (result === 'merge_all') {
-            const mergeOk = await performMerge(localWsId, workspace, unmergedRepos);
+            const mergeOk = await performMerge(localWsId, workspace, unmergedRepos, parentId);
             if (!mergeOk) {
               // Merge failed — revert sub-task back to in_review
               const localHandler = onBulkStatusUpdateRef.current;
@@ -1131,7 +1137,7 @@ export function KanbanContainer() {
           }
 
           if (result === 'merge') {
-            const mergeOk = await performMerge(localWsId, workspace, unmergedRepos);
+            const mergeOk = await performMerge(localWsId, workspace, unmergedRepos, parentId);
             if (!mergeOk) {
               // Merge failed — revert parent back to in_review
               const localHandler = onBulkStatusUpdateRef.current;

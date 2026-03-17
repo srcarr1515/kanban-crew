@@ -67,6 +67,7 @@ pub struct ListMessagesQuery {
 pub struct SendMessageRequest {
     pub thread_id: String,
     pub content: String,
+    pub crew_member_id: Option<String>,
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
@@ -224,13 +225,46 @@ async fn chat_completion(
     .fetch_all(pool)
     .await?;
 
-    // 3. Decide backend: prefer Claude CLI, fall back to Anthropic API
+    // 3. Build system prompt — optionally augmented with crew member persona
+    let system_prompt = if let Some(ref crew_id) = request.crew_member_id {
+        let crew_uuid = Uuid::parse_str(crew_id)
+            .map_err(|_| ApiError::BadRequest(format!("Invalid crew member ID: {crew_id}")))?;
+        let crew_member: Option<(String, String, String)> = sqlx::query_as(
+            "SELECT name, role_prompt, personality FROM crew_members WHERE id = ?",
+        )
+        .bind(crew_uuid)
+        .fetch_optional(pool)
+        .await?;
+
+        if let Some((name, role_prompt, personality)) = crew_member {
+            let mut prompt = format!(
+                "# Identity\n\
+                 You are \"{name}\", a crew member on a software development team.\n\n\
+                 # Role & Expertise\n\
+                 {role_prompt}\n\n\
+                 # Communication Style\n\
+                 {personality}\n\n\
+                 Stay in character at all times. Respond as {name} would — \
+                 use the communication style described above and bring the expertise of your role \
+                 to every answer.\n\n\
+                 # Task Instructions\n"
+            );
+            prompt.push_str(SYSTEM_PROMPT);
+            prompt
+        } else {
+            SYSTEM_PROMPT.to_string()
+        }
+    } else {
+        SYSTEM_PROMPT.to_string()
+    };
+
+    // 4. Decide backend: prefer Claude CLI, fall back to Anthropic API
     let use_cli = std::env::var("CHAT_BACKEND").unwrap_or_default() != "anthropic-api";
 
     if use_cli {
-        chat_completion_cli(pool, &request.thread_id, &history).await
+        chat_completion_cli(pool, &request.thread_id, &history, &system_prompt).await
     } else {
-        chat_completion_anthropic_api(pool, &request.thread_id, &history).await
+        chat_completion_anthropic_api(pool, &request.thread_id, &history, &system_prompt).await
     }
 }
 
@@ -240,13 +274,22 @@ async fn chat_completion_cli(
     pool: &sqlx::SqlitePool,
     thread_id: &str,
     history: &[ChatMessage],
+    system_prompt: &str,
 ) -> Result<Response<Body>, ApiError> {
     use std::process::Stdio;
 
     use tokio::process::Command;
 
-    // Build the conversation as a single prompt with context
-    let mut prompt = format!("{SYSTEM_PROMPT}\n\n--- Conversation History ---\n");
+    // Build conversation history as the user prompt
+    let mut prompt = String::new();
+    // If system prompt is too long for a CLI arg (Windows limit ~8191 chars),
+    // embed it in the conversation prompt as a fallback
+    let system_prompt_via_flag = system_prompt.len() < 7000;
+    if !system_prompt_via_flag {
+        prompt.push_str(system_prompt);
+        prompt.push_str("\n\n");
+    }
+    prompt.push_str("--- Conversation History ---\n");
     for msg in history {
         let role_label = match msg.role.as_str() {
             "user" => "User",
@@ -275,6 +318,10 @@ async fn chat_completion_cli(
         "--verbose",
         "--dangerously-skip-permissions",
     ]);
+    // Pass the system prompt via the dedicated flag so it stays in proper system context
+    if system_prompt_via_flag {
+        cmd.args(["--system-prompt", system_prompt]);
+    }
     // Use stdin for the prompt to avoid Windows .cmd argument escaping issues
     cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
@@ -407,6 +454,7 @@ async fn chat_completion_anthropic_api(
     pool: &sqlx::SqlitePool,
     thread_id: &str,
     history: &[ChatMessage],
+    system_prompt: &str,
 ) -> Result<Response<Body>, ApiError> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
         ApiError::BadRequest("ANTHROPIC_API_KEY environment variable is not set".to_string())
@@ -427,7 +475,7 @@ async fn chat_completion_anthropic_api(
         "model": "claude-sonnet-4-20250514",
         "max_tokens": 4096,
         "stream": true,
-        "system": SYSTEM_PROMPT,
+        "system": system_prompt,
         "messages": messages,
     });
 

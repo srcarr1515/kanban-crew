@@ -38,10 +38,10 @@ pub struct UpdateCrewMemberRequest {
 
 pub fn router() -> Router<DeploymentImpl> {
     Router::new()
-        .route("/crew-members", get(list_crew_members))
-        .route("/crew-members", post(create_crew_member))
-        .route("/crew-members/{id}", put(update_crew_member))
-        .route("/crew-members/{id}", delete(delete_crew_member))
+        .route("/local/crew-members", get(list_crew_members))
+        .route("/local/crew-members", post(create_crew_member))
+        .route("/local/crew-members/{id}", put(update_crew_member))
+        .route("/local/crew-members/{id}", delete(delete_crew_member))
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────

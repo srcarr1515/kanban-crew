@@ -97,12 +97,16 @@ export function listChatMessages(threadId: string): Promise<ChatMessage[]> {
  */
 export async function* streamChatCompletion(
   threadId: string,
-  content: string
+  content: string,
+  crewMemberId?: string | null
 ): AsyncGenerator<string, void, unknown> {
+  const body: Record<string, string> = { thread_id: threadId, content };
+  if (crewMemberId) body.crew_member_id = crewMemberId;
+
   const res = await makeLocalApiRequest('/api/local/chat/completions', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ thread_id: threadId, content }),
+    body: JSON.stringify(body),
   });
 
   if (!res.ok) {

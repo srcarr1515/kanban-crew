@@ -7,9 +7,11 @@ import {
 import {
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
+  CaretDownIcon,
   PaperPlaneRightIcon,
   PlusIcon,
   TrashIcon,
+  UserCircleIcon,
   XIcon,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -22,6 +24,10 @@ import {
   streamChatCompletion,
   type ChatThread,
 } from '@/shared/lib/local/chatApi';
+import {
+  listCrewMembers,
+  type CrewMember,
+} from '@/shared/lib/local/localApi';
 import { ChatMessageBubble, StreamingMessage } from './ChatMessage';
 import { useChatStore } from './useChatStore';
 
@@ -33,9 +39,19 @@ export function ChatPanel() {
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [optimisticText, setOptimisticText] = useState<string | null>(null);
+  const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
+  const [showCrewPicker, setShowCrewPicker] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef(false);
+  const crewPickerRef = useRef<HTMLDivElement>(null);
+
+  // ── Crew members ──────────────────────────────────────────────
+  const { data: crewMembers = [] } = useQuery({
+    queryKey: ['local', 'crew-members'],
+    queryFn: listCrewMembers,
+    staleTime: 30_000,
+  });
 
   // ── Threads ──────────────────────────────────────────────────────
   const { data: threads = [], isPending: isThreadsPending } = useQuery({
@@ -120,7 +136,7 @@ export function ChatPanel() {
 
     try {
       let accumulated = '';
-      for await (const chunk of streamChatCompletion(activeThreadId, text)) {
+      for await (const chunk of streamChatCompletion(activeThreadId, text, selectedCrewId)) {
         if (abortRef.current) break;
         accumulated += chunk;
         setStreamingContent(accumulated);
@@ -136,7 +152,7 @@ export function ChatPanel() {
         queryKey: ['chat-messages', activeThreadId],
       });
     }
-  }, [input, activeThreadId, isStreaming, queryClient]);
+  }, [input, activeThreadId, isStreaming, selectedCrewId, queryClient]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -220,7 +236,17 @@ export function ChatPanel() {
       </div>
 
       {/* Input area */}
-      <div className="shrink-0 border-t p-2">
+      <div className="shrink-0 border-t p-2 space-y-2">
+        {/* Crew member picker */}
+        <CrewMemberPicker
+          crewMembers={crewMembers}
+          selectedCrewId={selectedCrewId}
+          onSelect={setSelectedCrewId}
+          showPicker={showCrewPicker}
+          setShowPicker={setShowCrewPicker}
+          pickerRef={crewPickerRef}
+        />
+
         <div className="flex items-end gap-2">
           <textarea
             ref={inputRef}
@@ -279,5 +305,122 @@ function ThreadTab({
         <TrashIcon className="size-3" />
       </span>
     </button>
+  );
+}
+
+function CrewMemberPicker({
+  crewMembers,
+  selectedCrewId,
+  onSelect,
+  showPicker,
+  setShowPicker,
+  pickerRef,
+}: {
+  crewMembers: CrewMember[];
+  selectedCrewId: string | null;
+  onSelect: (id: string | null) => void;
+  showPicker: boolean;
+  setShowPicker: (show: boolean) => void;
+  pickerRef: React.RefObject<HTMLDivElement | null>;
+}) {
+  const selected = crewMembers.find((m) => m.id === selectedCrewId);
+
+  const isImageAvatar = (avatar?: string) =>
+    avatar?.startsWith('data:') || avatar?.startsWith('http');
+
+  useEffect(() => {
+    if (!showPicker) return;
+    const handleClickOutside = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setShowPicker(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showPicker, pickerRef, setShowPicker]);
+
+  return (
+    <div ref={pickerRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setShowPicker(!showPicker)}
+        className="flex items-center gap-2 px-2 py-1 rounded-md text-xs text-low hover:text-normal hover:bg-secondary transition-colors cursor-pointer"
+      >
+        {selected ? (
+          <>
+            <div className="flex items-center justify-center w-5 h-5 rounded-full overflow-hidden bg-brand/20 text-brand text-[10px] font-medium shrink-0">
+              {isImageAvatar(selected.avatar) ? (
+                <img src={selected.avatar} alt={selected.name} className="w-full h-full object-cover" />
+              ) : (
+                selected.avatar || selected.name.charAt(0).toUpperCase()
+              )}
+            </div>
+            <span className="font-medium text-high">{selected.name}</span>
+          </>
+        ) : (
+          <>
+            <UserCircleIcon className="size-4" weight="bold" />
+            <span>No crew member</span>
+          </>
+        )}
+        <CaretDownIcon className="size-3" />
+      </button>
+
+      {showPicker && (
+        <div className="absolute bottom-full left-0 mb-1 z-50 bg-panel border border-border rounded-md shadow-lg min-w-[200px] py-1">
+          {/* Default option */}
+          <button
+            type="button"
+            onClick={() => {
+              onSelect(null);
+              setShowPicker(false);
+            }}
+            className={`flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors cursor-pointer ${
+              !selectedCrewId
+                ? 'bg-brand/10 text-brand'
+                : 'text-normal hover:bg-primary/10'
+            }`}
+          >
+            <UserCircleIcon className="size-5" weight="bold" />
+            <div className="text-left">
+              <p className="font-medium">Default AI</p>
+              <p className="text-xs text-low">No crew persona</p>
+            </div>
+          </button>
+
+          {crewMembers.length > 0 && (
+            <div className="border-t border-border my-1" />
+          )}
+
+          {crewMembers.map((member) => (
+            <button
+              key={member.id}
+              type="button"
+              onClick={() => {
+                onSelect(member.id);
+                setShowPicker(false);
+              }}
+              className={`flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors cursor-pointer ${
+                selectedCrewId === member.id
+                  ? 'bg-brand/10 text-brand'
+                  : 'text-normal hover:bg-primary/10'
+              }`}
+            >
+              <div className="flex items-center justify-center w-5 h-5 rounded-full overflow-hidden bg-brand/20 text-brand text-[10px] font-medium shrink-0">
+                {isImageAvatar(member.avatar) ? (
+                  <img src={member.avatar} alt={member.name} className="w-full h-full object-cover" />
+                ) : (
+                  member.avatar || member.name.charAt(0).toUpperCase()
+                )}
+              </div>
+              <div className="text-left min-w-0">
+                <p className="font-medium truncate">{member.name}</p>
+                <p className="text-xs text-low truncate">{member.role}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
