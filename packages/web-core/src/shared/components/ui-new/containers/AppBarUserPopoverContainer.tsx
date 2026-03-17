@@ -1,12 +1,9 @@
-import { useState } from 'react';
+import { useCallback } from 'react';
 import type { OrganizationWithRole } from 'shared/types';
-import { AppBarUserPopover } from '@vibe/ui/components/AppBarUserPopover';
+import { UserIcon } from '@phosphor-icons/react';
+import { Tooltip } from '@vibe/ui/components/Tooltip';
 import { SettingsDialog } from '@/shared/dialogs/settings/SettingsDialog';
-import { useAuth } from '@/shared/hooks/auth/useAuth';
-import { useUserSystem } from '@/shared/hooks/useUserSystem';
-import { useOrganizationStore } from '@/shared/stores/useOrganizationStore';
-import { useActions } from '@/shared/hooks/useActions';
-import { Actions } from '@/shared/actions';
+import { cn } from '@/shared/lib/utils';
 
 interface AppBarUserPopoverContainerProps {
   organizations: OrganizationWithRole[];
@@ -15,59 +12,27 @@ interface AppBarUserPopoverContainerProps {
   onCreateOrg: () => void;
 }
 
-export function AppBarUserPopoverContainer({
-  organizations,
-  selectedOrgId,
-  onOrgSelect,
-  onCreateOrg,
-}: AppBarUserPopoverContainerProps) {
-  const { executeAction } = useActions();
-  const { isSignedIn } = useAuth();
-  const { loginStatus } = useUserSystem();
-  const setSelectedOrgId = useOrganizationStore((s) => s.setSelectedOrgId);
-  const [open, setOpen] = useState(false);
-  const [avatarError, setAvatarError] = useState(false);
-
-  // Extract avatar URL from first provider
-  const avatarUrl =
-    loginStatus?.status === 'loggedin'
-      ? (loginStatus.profile.providers[0]?.avatar_url ?? null)
-      : null;
-
-  const handleSignIn = async () => {
-    await executeAction(Actions.SignIn);
-  };
-
-  const handleLogout = async () => {
-    await executeAction(Actions.SignOut);
-  };
-
-  const handleOrgSettings = async (orgId: string) => {
-    setSelectedOrgId(orgId);
-    await SettingsDialog.show({ initialSection: 'organizations' });
-  };
-
-  const handleSettings = async () => {
-    setOpen(false);
-    await SettingsDialog.show();
-  };
+export function AppBarUserPopoverContainer({}: AppBarUserPopoverContainerProps) {
+  const handleClick = useCallback(() => {
+    void SettingsDialog.show();
+  }, []);
 
   return (
-    <AppBarUserPopover
-      isSignedIn={isSignedIn}
-      avatarUrl={avatarUrl}
-      avatarError={avatarError}
-      organizations={organizations}
-      selectedOrgId={selectedOrgId}
-      open={open}
-      onOpenChange={setOpen}
-      onOrgSelect={onOrgSelect}
-      onCreateOrg={onCreateOrg}
-      onOrgSettings={handleOrgSettings}
-      onSignIn={handleSignIn}
-      onLogout={handleLogout}
-      onAvatarError={() => setAvatarError(true)}
-      onSettings={handleSettings}
-    />
+    <Tooltip content="Settings" side="right">
+      <button
+        type="button"
+        onClick={handleClick}
+        className={cn(
+          'flex items-center justify-center w-7 h-7 sm:w-10 sm:h-10 rounded-md sm:rounded-lg',
+          'bg-panel text-normal font-medium text-sm',
+          'transition-colors cursor-pointer',
+          'hover:bg-panel/70',
+          'focus:outline-none focus-visible:ring-2 focus-visible:ring-brand'
+        )}
+        aria-label="Settings"
+      >
+        <UserIcon className="size-icon-sm" weight="bold" />
+      </button>
+    </Tooltip>
   );
 }
