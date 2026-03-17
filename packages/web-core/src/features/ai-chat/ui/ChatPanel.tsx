@@ -5,6 +5,8 @@ import {
   useState,
 } from 'react';
 import {
+  ArrowsInSimpleIcon,
+  ArrowsOutSimpleIcon,
   PaperPlaneRightIcon,
   PlusIcon,
   TrashIcon,
@@ -26,7 +28,7 @@ import { useChatStore } from './useChatStore';
 export function ChatPanel() {
   const { projectId } = useProjectContext();
   const queryClient = useQueryClient();
-  const { activeThreadId, setActiveThread, close } = useChatStore();
+  const { activeThreadId, setActiveThread, close, isFullscreen, toggleFullscreen } = useChatStore();
   const [input, setInput] = useState('');
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -169,6 +171,18 @@ export function ChatPanel() {
             <PlusIcon className="size-4" weight="bold" />
           </button>
         </div>
+        <button
+          type="button"
+          onClick={toggleFullscreen}
+          className="shrink-0 p-2 text-low hover:text-normal hover:bg-panel transition-colors"
+          title={isFullscreen ? 'Exit fullscreen' : 'Fullscreen'}
+        >
+          {isFullscreen ? (
+            <ArrowsInSimpleIcon className="size-4" weight="bold" />
+          ) : (
+            <ArrowsOutSimpleIcon className="size-4" weight="bold" />
+          )}
+        </button>
         <button
           type="button"
           onClick={close}
