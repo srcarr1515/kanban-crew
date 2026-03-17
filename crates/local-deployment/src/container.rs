@@ -666,11 +666,62 @@ impl LocalContainerService {
             }
         }
 
+        // If the selected task is a parent with ready sub-tasks, the parent is just
+        // an organizational container — use its workspace/branch but start the first
+        // sub-task immediately instead of "implementing" the parent.
+        let first_subtask: Option<(Uuid, String, Option<String>)> = sqlx::query_as(
+            r#"SELECT id, title, description FROM tasks
+               WHERE parent_task_id = ? AND status = 'ready'
+               ORDER BY parent_task_sort_order ASC, created_at ASC
+               LIMIT 1"#,
+        )
+        .bind(selected_task_id)
+        .fetch_optional(&self.db.pool)
+        .await
+        .ok()
+        .flatten();
+
+        let (prompt_task_title, prompt_task_description, prompt_prefix) =
+            if let Some((sub_id, sub_title, sub_desc)) = first_subtask {
+                // Claim the sub-task atomically
+                let claimed = sqlx::query(
+                    "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now', 'subsec') WHERE id = ? AND status = 'ready'",
+                )
+                .bind(sub_id)
+                .execute(&self.db.pool)
+                .await
+                .map(|r| r.rows_affected() > 0)
+                .unwrap_or(false);
+
+                if claimed {
+                    // Re-link workspace to the sub-task
+                    if let Err(e) = Workspace::link_to_task(&self.db.pool, workspace_id, sub_id).await {
+                        tracing::warn!("Auto-pickup: failed to re-link workspace to sub-task: {e}");
+                        // Fall through to use parent task prompt
+                        (selected_task_title.clone(), task_description.clone(), "Implement the following task:")
+                    } else {
+                        tracing::info!(
+                            "Auto-pickup: parent task \"{}\" has sub-tasks, starting with \"{}\"",
+                            selected_task_title,
+                            sub_title,
+                        );
+                        (sub_title, sub_desc, "Implement the following task:")
+                    }
+                } else {
+                    // Another agent claimed it, fall through to parent
+                    (selected_task_title.clone(), task_description.clone(), "Implement the following task:")
+                }
+            } else {
+                // No sub-tasks — regular standalone task
+                (selected_task_title.clone(), task_description.clone(), "Implement the following task:")
+            };
+
         // Build prompt from the task
         let prompt = format!(
-            "Implement the following task:\n\nTitle: {}\n{}",
-            selected_task_title,
-            task_description
+            "{}\n\nTitle: {}\n{}",
+            prompt_prefix,
+            prompt_task_title,
+            prompt_task_description
                 .as_deref()
                 .map(|d| format!("\nDescription: {d}"))
                 .unwrap_or_default()
@@ -687,7 +738,7 @@ impl LocalContainerService {
                 tracing::info!(
                     "Auto-pickup: started workspace {} for task \"{}\" (execution {})",
                     workspace.id,
-                    selected_task_title,
+                    prompt_task_title,
                     ep.id,
                 );
             }
@@ -783,14 +834,27 @@ impl LocalContainerService {
         // Re-link the workspace to the sub-issue task
         Workspace::link_to_task(&self.db.pool, parent_workspace.id, sub_task_id).await?;
 
-        // Transition parent task to "in_review" since its workspace is being reassigned
-        // to a sub-task. Human review moves it to "done".
-        let _ = sqlx::query(
-            "UPDATE tasks SET status = 'in_review', updated_at = datetime('now', 'subsec') WHERE id = ? AND status NOT IN ('in_review', 'done', 'cancelled')",
+        // Only transition parent to "in_review" once ALL its sub-tasks are in
+        // a terminal-ish state (in_review, done, or cancelled). While sub-tasks
+        // are still being worked through, the parent stays in_progress.
+        let pending_subtasks: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM tasks
+               WHERE parent_task_id = ?
+                 AND status NOT IN ('in_review', 'done', 'cancelled')"#,
         )
         .bind(parent_task_id)
-        .execute(&self.db.pool)
-        .await;
+        .fetch_one(&self.db.pool)
+        .await
+        .unwrap_or(1); // default to 1 so we don't prematurely transition on error
+
+        if pending_subtasks == 0 {
+            let _ = sqlx::query(
+                "UPDATE tasks SET status = 'in_review', updated_at = datetime('now', 'subsec') WHERE id = ? AND status NOT IN ('in_review', 'done', 'cancelled')",
+            )
+            .bind(parent_task_id)
+            .execute(&self.db.pool)
+            .await;
+        }
 
         // Build the follow-up prompt
         let prompt = format!(

@@ -278,6 +278,37 @@ pub trait ContainerService {
                 .bind(task_id)
                 .execute(&self.db().pool)
                 .await;
+
+                // If this task is a sub-task, check whether all siblings are now
+                // in a terminal state. If so, transition the parent to 'in_review'.
+                let parent_id: Option<Uuid> =
+                    sqlx::query_scalar("SELECT parent_task_id FROM tasks WHERE id = ?")
+                        .bind(task_id)
+                        .fetch_optional(&self.db().pool)
+                        .await
+                        .ok()
+                        .flatten();
+
+                if let Some(parent_id) = parent_id {
+                    let pending: i64 = sqlx::query_scalar(
+                        r#"SELECT COUNT(*) FROM tasks
+                           WHERE parent_task_id = ?
+                             AND status NOT IN ('in_review', 'done', 'cancelled')"#,
+                    )
+                    .bind(parent_id)
+                    .fetch_one(&self.db().pool)
+                    .await
+                    .unwrap_or(1);
+
+                    if pending == 0 {
+                        let _ = sqlx::query(
+                            "UPDATE tasks SET status = 'in_review', updated_at = datetime('now', 'subsec') WHERE id = ? AND status NOT IN ('in_review', 'done', 'cancelled')",
+                        )
+                        .bind(parent_id)
+                        .execute(&self.db().pool)
+                        .await;
+                    }
+                }
             }
         }
 
