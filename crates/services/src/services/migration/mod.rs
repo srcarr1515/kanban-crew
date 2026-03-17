@@ -652,6 +652,7 @@ impl MigrationService {
 fn map_task_status(status: &TaskStatus) -> String {
     match status {
         TaskStatus::Todo => "To do".to_string(),
+        TaskStatus::Ready => "Ready".to_string(),
         TaskStatus::InProgress => "In progress".to_string(),
         TaskStatus::InReview => "In review".to_string(),
         TaskStatus::Done => "Done".to_string(),

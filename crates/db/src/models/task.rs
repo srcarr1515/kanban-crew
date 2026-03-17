@@ -14,6 +14,7 @@ use uuid::Uuid;
 pub enum TaskStatus {
     #[default]
     Todo,
+    Ready,
     InProgress,
     InReview,
     Done,

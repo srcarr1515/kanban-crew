@@ -97,7 +97,7 @@ pub async fn update_workspace(
 
             if active_count == 0 {
                 let _ = sqlx::query(
-                    "UPDATE tasks SET status = 'done', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'in_progress', 'in_review')",
+                    "UPDATE tasks SET status = 'done', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'ready', 'in_progress', 'in_review')",
                 )
                 .bind(task_id)
                 .execute(pool)

@@ -9,7 +9,7 @@ export interface LocalTask {
   project_id: string;
   title: string;
   description: string | null;
-  /** One of: "todo" | "in_progress" | "in_review" | "done" | "cancelled" */
+  /** One of: "todo" | "ready" | "in_progress" | "in_review" | "done" | "cancelled" */
   status: string;
   sort_order: number;
   created_at: string;

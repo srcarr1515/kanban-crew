@@ -106,9 +106,9 @@ pub async fn create_and_start_workspace(
 
         Workspace::link_to_task(pool, workspace_id, task_id).await?;
 
-        // Auto-transition task from 'todo' to 'in_progress'
+        // Auto-transition task from 'todo' or 'ready' to 'in_progress'
         sqlx::query(
-            "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now', 'subsec') WHERE id = ? AND status = 'todo'"
+            "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'ready')"
         )
         .bind(task_id)
         .execute(pool)

@@ -11,10 +11,11 @@ use super::get_txid;
 pub const DEFAULT_STATUSES: &[(&str, &str, i32, bool)] = &[
     ("Backlog", "220 9% 46%", 0, true),
     ("To do", "217 91% 60%", 1, false),
-    ("In progress", "38 92% 50%", 2, false),
-    ("In review", "258 90% 66%", 3, false),
-    ("Done", "142 71% 45%", 4, false),
-    ("Cancelled", "0 84% 60%", 5, true),
+    ("Ready", "263 70% 58%", 2, false),
+    ("In progress", "38 92% 50%", 3, false),
+    ("In review", "258 90% 66%", 4, false),
+    ("Done", "142 71% 45%", 5, false),
+    ("Cancelled", "0 84% 60%", 6, true),
 ];
 
 #[derive(Debug, Error)]
