@@ -181,7 +181,7 @@ pub async fn merge_workspace(
     Extension(workspace): Extension<Workspace>,
     State(deployment): State<DeploymentImpl>,
     Json(request): Json<MergeWorkspaceRequest>,
-) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
+) -> Result<ResponseJson<ApiResponse<(), GitOperationError>>, ApiError> {
     let pool = &deployment.db().pool;
 
     let workspace_repo =
@@ -224,13 +224,56 @@ pub async fn merge_workspace(
     let vk_id = resolve_vibe_kanban_identifier(&deployment, workspace.id).await;
     let commit_message = format!("{} (vibe-kanban {})", workspace_label, vk_id);
 
-    let merge_commit_id = deployment.git().merge_changes(
+    let merge_result = deployment.git().merge_changes(
         &repo.path,
         &worktree_path,
         &workspace.branch,
         &workspace_repo.target_branch,
         &commit_message,
-    )?;
+    );
+
+    let merge_commit_id = match merge_result {
+        Ok(sha) => sha,
+        Err(GitServiceError::MergeConflicts {
+            message,
+            conflicted_files,
+        }) => {
+            // Transition linked task to done even on conflict —
+            // a separate task will cover the conflict resolution
+            if let Some(task_id) = workspace.task_id {
+                let _ = sqlx::query(
+                    "UPDATE tasks SET status = 'done', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'in_progress', 'in_review')",
+                )
+                .bind(task_id)
+                .execute(pool)
+                .await;
+            }
+            return Ok(ResponseJson(
+                ApiResponse::<(), GitOperationError>::error_with_data(
+                    GitOperationError::MergeConflicts {
+                        message,
+                        op: ConflictOp::Merge,
+                        conflicted_files,
+                        target_branch: workspace_repo.target_branch.clone(),
+                    },
+                ),
+            ));
+        }
+        Err(GitServiceError::BranchesDiverged(msg)) => {
+            return Err(ApiError::GitService(GitServiceError::BranchesDiverged(msg)));
+        }
+        Err(other) => return Err(ApiError::GitService(other)),
+    };
+
+    // Transition linked task to done on successful merge
+    if let Some(task_id) = workspace.task_id {
+        let _ = sqlx::query(
+            "UPDATE tasks SET status = 'done', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'in_progress', 'in_review')",
+        )
+        .bind(task_id)
+        .execute(pool)
+        .await;
+    }
 
     Merge::create_direct(
         pool,

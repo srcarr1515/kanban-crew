@@ -859,16 +859,40 @@ impl GitService {
 
                 // Use CLI merge in base context
                 self.ensure_cli_commit_identity(&base_checkout_path)?;
-                let sha = git_cli
-                    .merge_squash_commit(
-                        &base_checkout_path,
-                        base_branch_name,
-                        task_branch_name,
-                        commit_message,
-                    )
-                    .map_err(|e| {
-                        GitServiceError::InvalidRepository(format!("CLI merge failed: {e}"))
-                    })?;
+                let sha = match git_cli.merge_squash_commit(
+                    &base_checkout_path,
+                    base_branch_name,
+                    task_branch_name,
+                    commit_message,
+                ) {
+                    Ok(sha) => sha,
+                    Err(e) => {
+                        // Check if this was a conflict situation
+                        let conflicted = git_cli
+                            .get_conflicted_files(&base_checkout_path)
+                            .unwrap_or_default();
+                        // Always abort any in-progress merge to leave the
+                        // working tree clean
+                        let _ = git_cli.abort_merge(&base_checkout_path);
+                        // Also reset any staged squash-merge state
+                        let _ = git_cli.git(&base_checkout_path, ["reset", "HEAD"]);
+
+                        if !conflicted.is_empty() {
+                            return Err(GitServiceError::MergeConflicts {
+                                message: format!(
+                                    "Merge of '{}' into '{}' has conflicts in {} file(s).",
+                                    task_branch_name,
+                                    base_branch_name,
+                                    conflicted.len()
+                                ),
+                                conflicted_files: conflicted,
+                            });
+                        }
+                        return Err(GitServiceError::InvalidRepository(format!(
+                            "CLI merge failed: {e}"
+                        )));
+                    }
+                };
 
                 // Update task branch ref for continuity
                 let task_refname = format!("refs/heads/{task_branch_name}");

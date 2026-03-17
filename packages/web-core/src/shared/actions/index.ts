@@ -72,6 +72,8 @@ import posthog from 'posthog-js';
 import { WorkspacesGuideDialog } from '@/shared/dialogs/shared/WorkspacesGuideDialog';
 import { SettingsDialog } from '@/shared/dialogs/settings/SettingsDialog';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
+import { createLocalTask, listLocalProjects } from '@/shared/lib/local/localApi';
+import { ApiError } from '@/shared/lib/api';
 import { CreateWorkspaceFromPrDialog } from '@/shared/dialogs/command-bar/CreateWorkspaceFromPrDialog';
 import { buildWorkspaceCreateInitialState } from '@/shared/lib/workspaceCreateState';
 import { setCreateModeSeedState } from '@/features/create-mode/model/createModeSeedStore';
@@ -1021,8 +1023,62 @@ export const Actions = {
       });
 
       if (confirmResult === 'confirmed') {
-        await workspacesApi.merge(workspaceId, { repo_id: repoId });
-        invalidateWorkspaceQueries(ctx.queryClient, workspaceId);
+        try {
+          await workspacesApi.merge(workspaceId, { repo_id: repoId });
+          invalidateWorkspaceQueries(ctx.queryClient, workspaceId);
+          if (IS_LOCAL_MODE) {
+            ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+          }
+        } catch (err) {
+          // Check if this is a merge conflict with structured error data
+          if (
+            IS_LOCAL_MODE &&
+            err instanceof ApiError &&
+            err.error_data &&
+            typeof err.error_data === 'object' &&
+            'type' in err.error_data &&
+            (err.error_data as { type: string }).type === 'merge_conflicts'
+          ) {
+            const conflictData = err.error_data as {
+              conflicted_files: string[];
+              target_branch: string;
+              message: string;
+            };
+            const workspace = await getWorkspace(ctx.queryClient, workspaceId);
+            const fileList = conflictData.conflicted_files.slice(0, 10).join('\n  • ');
+            const moreCount = Math.max(0, conflictData.conflicted_files.length - 10);
+            const moreText = moreCount > 0 ? `\n  ...and ${moreCount} more` : '';
+
+            const result = await ConfirmDialog.show({
+              title: 'Merge Conflicts Detected',
+              message:
+                `Cannot merge "${workspace.name || workspace.branch}" into "${conflictData.target_branch}" due to conflicts in:\n  • ${fileList}${moreText}\n\nWould you like to create a task to resolve these conflicts on the main branch?`,
+              confirmText: 'Create Resolve Task',
+              cancelText: 'Cancel',
+            });
+
+            if (result === 'confirmed') {
+              try {
+                const projects = await listLocalProjects();
+                if (projects.length > 0) {
+                  const projectId = projects[0]!.id;
+                  await createLocalTask({
+                    project_id: projectId,
+                    title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
+                    description:
+                      `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts directly on the ${conflictData.target_branch} branch.`,
+                    status: 'in_progress',
+                  });
+                  ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+                }
+              } catch (taskErr) {
+                console.error('Failed to create conflict resolution task:', taskErr);
+              }
+            }
+          } else {
+            throw err;
+          }
+        }
       }
     },
   },
