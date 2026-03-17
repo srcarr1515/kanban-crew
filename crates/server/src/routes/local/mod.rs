@@ -7,12 +7,20 @@ use axum::{
 use chrono::{DateTime, Utc};
 use db::models::{project::Project, workspace::Workspace};
 use deployment::Deployment;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::FromRow;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
+
+fn some_if_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
+}
 
 pub mod chat;
 pub mod crew_members;
@@ -59,10 +67,13 @@ pub struct CreateTaskRequest {
 #[derive(Debug, Deserialize)]
 pub struct UpdateTaskRequest {
     pub title: Option<String>,
+    #[serde(default, deserialize_with = "some_if_present")]
     pub description: Option<Option<String>>,
     pub status: Option<String>,
     pub sort_order: Option<i64>,
+    #[serde(default, deserialize_with = "some_if_present")]
     pub parent_task_id: Option<Option<Uuid>>,
+    #[serde(default, deserialize_with = "some_if_present")]
     pub parent_task_sort_order: Option<Option<f64>>,
 }
 
