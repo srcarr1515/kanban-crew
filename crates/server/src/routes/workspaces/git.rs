@@ -218,19 +218,81 @@ pub async fn merge_workspace(
         .ensure_container_exists(&workspace)
         .await?;
     let workspace_path = Path::new(&container_ref);
-    let worktree_path = workspace_path.join(repo.name);
+    let worktree_path = workspace_path.join(&repo.name);
+
+    // Failsafe: auto-commit any uncommitted changes before merging.
+    // This prevents merge/rebase failures when the agent left uncommitted work.
+    match deployment.git().commit(&worktree_path, "wip: uncommitted changes before merge") {
+        Ok(true) => {
+            tracing::info!(
+                "merge_workspace: auto-committed uncommitted changes in '{}' for workspace {}",
+                repo.name, workspace.id
+            );
+        }
+        Ok(false) => {} // Clean worktree — normal case
+        Err(e) => {
+            tracing::warn!(
+                "merge_workspace: failed to auto-commit in '{}': {}",
+                repo.name, e
+            );
+        }
+    }
 
     let workspace_label = workspace.name.as_deref().unwrap_or(&workspace.branch);
     let vk_id = resolve_vibe_kanban_identifier(&deployment, workspace.id).await;
     let commit_message = format!("{} (vibe-kanban {})", workspace_label, vk_id);
 
-    let merge_result = deployment.git().merge_changes(
+    let mut merge_result = deployment.git().merge_changes(
         &repo.path,
         &worktree_path,
         &workspace.branch,
         &workspace_repo.target_branch,
         &commit_message,
     );
+
+    // Auto-rebase when branches have diverged (base branch moved ahead from
+    // other merged tasks), then retry the merge automatically.
+    if matches!(&merge_result, Err(GitServiceError::BranchesDiverged(_))) {
+        let target = workspace_repo.target_branch.clone();
+        tracing::info!(
+            "merge_workspace: branches diverged, auto-rebasing '{}' onto '{}' for workspace {}",
+            workspace.branch, target, workspace.id
+        );
+        match deployment.git().rebase_branch(
+            &repo.path,
+            &worktree_path,
+            &target,
+            &target,
+            &workspace.branch,
+        ) {
+            Ok(_) => {
+                tracing::info!("merge_workspace: auto-rebase succeeded, retrying merge");
+                merge_result = deployment.git().merge_changes(
+                    &repo.path,
+                    &worktree_path,
+                    &workspace.branch,
+                    &workspace_repo.target_branch,
+                    &commit_message,
+                );
+            }
+            Err(GitServiceError::MergeConflicts { message, conflicted_files }) => {
+                return Ok(ResponseJson(
+                    ApiResponse::<(), GitOperationError>::error_with_data(
+                        GitOperationError::MergeConflicts {
+                            message,
+                            op: ConflictOp::Rebase,
+                            conflicted_files,
+                            target_branch: target,
+                        },
+                    ),
+                ));
+            }
+            Err(e) => {
+                tracing::error!("merge_workspace: auto-rebase failed: {}", e);
+                return Err(ApiError::GitService(e));
+            }
+        }
+    }
 
     let merge_commit_id = match merge_result {
         Ok(sha) => sha,
@@ -260,6 +322,7 @@ pub async fn merge_workspace(
             ));
         }
         Err(GitServiceError::BranchesDiverged(msg)) => {
+            // Should not happen after auto-rebase, but handle gracefully
             return Err(ApiError::GitService(GitServiceError::BranchesDiverged(msg)));
         }
         Err(other) => return Err(ApiError::GitService(other)),
@@ -792,6 +855,24 @@ pub async fn rebase_workspace(
         .await?;
     let workspace_path = Path::new(&container_ref);
     let worktree_path = workspace_path.join(&repo.name);
+
+    // Failsafe: auto-commit any uncommitted changes before rebasing.
+    // This prevents rebase failures when the agent left uncommitted work.
+    match deployment.git().commit(&worktree_path, "wip: uncommitted changes before rebase") {
+        Ok(true) => {
+            tracing::info!(
+                "rebase_workspace: auto-committed uncommitted changes in '{}' for workspace {}",
+                repo.name, workspace.id
+            );
+        }
+        Ok(false) => {} // Clean worktree — normal case
+        Err(e) => {
+            tracing::warn!(
+                "rebase_workspace: failed to auto-commit in '{}': {}",
+                repo.name, e
+            );
+        }
+    }
 
     let result = deployment.git().rebase_branch(
         &repo.path,

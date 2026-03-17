@@ -241,6 +241,31 @@ pub trait ContainerService {
             return;
         }
 
+        // Safety commit: ensure any remaining uncommitted changes are committed
+        // before transitioning the task. This catches edge cases where
+        // try_commit_changes failed or was skipped (e.g. non-coding-agent runs).
+        if let Some(container_ref) = ctx.workspace.container_ref.as_ref() {
+            let workspace_root = PathBuf::from(container_ref);
+            for repo in &ctx.repos {
+                let worktree_path = workspace_root.join(&repo.name);
+                match self.git().commit(&worktree_path, "wip: uncommitted changes from agent session") {
+                    Ok(true) => {
+                        tracing::info!(
+                            "finalize_task: safety-committed uncommitted changes in repo '{}' for workspace {}",
+                            repo.name, ctx.workspace.id
+                        );
+                    }
+                    Ok(false) => {} // No changes — expected happy path
+                    Err(e) => {
+                        tracing::warn!(
+                            "finalize_task: failed to safety-commit in repo '{}': {}",
+                            repo.name, e
+                        );
+                    }
+                }
+            }
+        }
+
         // Transition linked task to 'in_review' when execution completes successfully
         if matches!(ctx.execution_process.status, ExecutionProcessStatus::Completed) {
             if let Some(task_id) = ctx.workspace.task_id {
