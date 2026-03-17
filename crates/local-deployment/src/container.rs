@@ -698,7 +698,7 @@ impl LocalContainerService {
     /// Returns Ok(true) if successfully reused, Ok(false) if no reusable workspace found.
     ///
     /// Safety: refuses to reuse a workspace that has a running execution (defense-in-depth;
-    /// the main guard is in auto_pickup::find_tasks_with_active_parent_workspace).
+    /// the main guard is in auto_pickup which filters sub-tasks from the general pool).
     async fn try_reuse_parent_workspace(
         &self,
         parent_task_id: Uuid,

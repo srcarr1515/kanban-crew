@@ -936,12 +936,34 @@ export function KanbanContainer() {
           queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
           queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
         }
-        // result === 'skip': do nothing, task stays in done
+
+        // For both 'merge' and 'skip': parent is going to done, so transition
+        // all active sub-tasks to done as well (the branch work is finalized).
+        if (result === 'merge' || result === 'skip') {
+          const activeSubTasks = issues.filter(
+            (i) =>
+              i.parent_issue_id === issueId &&
+              i.status_id !== 'done' &&
+              i.status_id !== 'cancelled'
+          );
+          if (activeSubTasks.length > 0) {
+            const localHandler = onBulkStatusUpdateRef.current;
+            if (localHandler) {
+              await localHandler(
+                activeSubTasks.map((t) => ({
+                  id: t.id,
+                  changes: { status_id: 'done' },
+                }))
+              );
+            }
+            queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+          }
+        }
       } catch (err) {
         console.error('[MergeOnDone] Failed to check branch status:', err);
       }
     },
-    [getWorkspacesForIssue, queryClient]
+    [getWorkspacesForIssue, issues, queryClient]
   );
 
   // Simple onDragEnd handler - the library handles all visual movement

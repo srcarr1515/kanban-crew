@@ -259,22 +259,24 @@ pub async fn try_select_next_task(
             return Ok(None);
         }
 
-        // Filter out sub-tasks whose parent has a running workspace
-        let blocked_ids = find_tasks_with_active_parent_workspace(pool, project_id).await?;
-        if !blocked_ids.is_empty() {
+        // Filter out ALL sub-tasks from the general pool. Sub-tasks should only be
+        // picked up via Priority 1 (by the parent's own workspace completing), never
+        // by an unrelated agent finishing a different ticket.
+        let subtask_ids = find_all_subtask_ids(pool, project_id).await?;
+        if !subtask_ids.is_empty() {
             tracing::debug!(
-                "Auto-pickup: filtering out {} task(s) with active parent workspaces",
-                blocked_ids.len()
+                "Auto-pickup: filtering out {} sub-task(s) from general pool",
+                subtask_ids.len()
             );
         }
 
         let filtered: Vec<Task> = all_ready
             .into_iter()
-            .filter(|t| !blocked_ids.contains(&t.id))
+            .filter(|t| !subtask_ids.contains(&t.id))
             .collect();
 
         if filtered.is_empty() {
-            tracing::debug!("All ready tasks are blocked by active parent workspaces");
+            tracing::debug!("No eligible ready tasks after filtering sub-tasks");
             return Ok(None);
         }
 
@@ -356,10 +358,10 @@ async fn find_ready_subtasks(
     .map_err(AutoPickupError::Db)
 }
 
-/// Find task IDs that are sub-tasks whose parent has a non-archived workspace
-/// with a running execution. These tasks should not be auto-picked up to avoid
-/// two agents working on the same parent's branch simultaneously.
-async fn find_tasks_with_active_parent_workspace(
+/// Find all ready sub-task IDs in a project. Sub-tasks (tasks with a parent_task_id)
+/// are excluded from the general auto-pickup pool — they should only be picked up
+/// via Priority 1 when their parent's workspace completes.
+async fn find_all_subtask_ids(
     pool: &sqlx::SqlitePool,
     project_id: Uuid,
 ) -> Result<Vec<Uuid>, AutoPickupError> {
@@ -368,16 +370,7 @@ async fn find_tasks_with_active_parent_workspace(
            FROM tasks t
            WHERE t.project_id = ?
              AND t.status = 'ready'
-             AND t.parent_task_id IS NOT NULL
-             AND EXISTS (
-               SELECT 1 FROM workspaces w
-               JOIN sessions s ON s.workspace_id = w.id
-               JOIN execution_processes ep ON ep.session_id = s.id
-               WHERE w.task_id = t.parent_task_id
-                 AND w.archived = 0
-                 AND ep.status = 'running'
-                 AND ep.run_reason IN ('setupscript', 'cleanupscript', 'codingagent')
-             )"#,
+             AND t.parent_task_id IS NOT NULL"#,
     )
     .bind(project_id)
     .fetch_all(pool)
