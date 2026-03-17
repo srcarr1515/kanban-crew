@@ -1,10 +1,7 @@
 use async_trait::async_trait;
 use db::{
     DBService,
-    models::{
-        project::Project,
-        task::Task,
-    },
+    models::{project::Project, task::Task},
 };
 use uuid::Uuid;
 
@@ -68,7 +65,9 @@ impl TaskAssignmentStrategy for LlmRankedTaskAssignment {
         context: &TaskAssignmentContext,
     ) -> Result<Uuid, AutoPickupError> {
         let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-            AutoPickupError::Config("ANTHROPIC_API_KEY not set, falling back to simple selection".into())
+            AutoPickupError::Config(
+                "ANTHROPIC_API_KEY not set, falling back to simple selection".into(),
+            )
         })?;
 
         let prompt = build_ranking_prompt(ready_tasks, context);
@@ -115,7 +114,9 @@ impl TaskAssignmentStrategy for LlmRankedTaskAssignment {
         let selected_id = Uuid::parse_str(&text).or_else(|_| {
             // Try to find a UUID anywhere in the response text
             for word in text.split_whitespace() {
-                if let Ok(id) = Uuid::parse_str(word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-')) {
+                if let Ok(id) =
+                    Uuid::parse_str(word.trim_matches(|c: char| !c.is_alphanumeric() && c != '-'))
+                {
                     // Verify this is actually one of the ready tasks
                     if ready_tasks.iter().any(|t| t.id == id) {
                         return Ok(id);
@@ -192,15 +193,22 @@ pub async fn select_next_task(
     }
 
     if ready_tasks.len() == 1 {
-        return SimpleTaskAssignment.select_next_task(ready_tasks, context).await;
+        return SimpleTaskAssignment
+            .select_next_task(ready_tasks, context)
+            .await;
     }
 
     // Multiple ready tasks — try LLM, fall back to simple
-    match LlmRankedTaskAssignment.select_next_task(ready_tasks, context).await {
+    match LlmRankedTaskAssignment
+        .select_next_task(ready_tasks, context)
+        .await
+    {
         Ok(id) => Ok(id),
         Err(e) => {
             tracing::warn!("LLM task ranking failed, falling back to sort order: {e}");
-            SimpleTaskAssignment.select_next_task(ready_tasks, context).await
+            SimpleTaskAssignment
+                .select_next_task(ready_tasks, context)
+                .await
         }
     }
 }

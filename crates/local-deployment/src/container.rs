@@ -482,12 +482,13 @@ impl LocalContainerService {
         use services::services::auto_pickup;
 
         // Only trigger for successful CodingAgent completions with a linked task
-        if !matches!(ctx.execution_process.status, ExecutionProcessStatus::Completed)
-            || !matches!(
-                ctx.execution_process.run_reason,
-                ExecutionProcessRunReason::CodingAgent
-            )
-        {
+        if !matches!(
+            ctx.execution_process.status,
+            ExecutionProcessStatus::Completed
+        ) || !matches!(
+            ctx.execution_process.run_reason,
+            ExecutionProcessRunReason::CodingAgent
+        ) {
             return;
         }
 
@@ -516,25 +517,28 @@ impl LocalContainerService {
         );
 
         // Extract executor config from the completed workspace's execution
-        let executor_config = match ctx
-            .execution_process
-            .executor_action()
-            .ok()
-            .and_then(|action| match action.typ() {
-                ExecutorActionType::CodingAgentInitialRequest(req) => {
-                    Some(req.executor_config.clone())
+        let executor_config =
+            match ctx
+                .execution_process
+                .executor_action()
+                .ok()
+                .and_then(|action| match action.typ() {
+                    ExecutorActionType::CodingAgentInitialRequest(req) => {
+                        Some(req.executor_config.clone())
+                    }
+                    ExecutorActionType::CodingAgentFollowUpRequest(req) => {
+                        Some(req.executor_config.clone())
+                    }
+                    _ => None,
+                }) {
+                Some(config) => config,
+                None => {
+                    tracing::warn!(
+                        "Auto-pickup: could not extract executor config from completed workspace"
+                    );
+                    return;
                 }
-                ExecutorActionType::CodingAgentFollowUpRequest(req) => {
-                    Some(req.executor_config.clone())
-                }
-                _ => None,
-            }) {
-            Some(config) => config,
-            None => {
-                tracing::warn!("Auto-pickup: could not extract executor config from completed workspace");
-                return;
-            }
-        };
+            };
 
         // Get repos from the completed workspace to reuse the same repo setup
         let repos = match WorkspaceRepo::find_repos_with_target_branch_for_workspace(
@@ -757,12 +761,11 @@ impl LocalContainerService {
         }
 
         // Find the latest session for the parent workspace
-        let session = match Session::find_latest_by_workspace_id(&self.db.pool, parent_workspace.id)
-            .await?
-        {
-            Some(s) => s,
-            None => return Ok(false),
-        };
+        let session =
+            match Session::find_latest_by_workspace_id(&self.db.pool, parent_workspace.id).await? {
+                Some(s) => s,
+                None => return Ok(false),
+            };
 
         // Find the latest completed execution process from this session
         let latest_ep = ExecutionProcess::find_latest_by_session_and_run_reason(
@@ -803,7 +806,8 @@ impl LocalContainerService {
             executor_config: executor_config.clone(),
         };
 
-        let repos = WorkspaceRepo::find_repos_for_workspace(&self.db.pool, parent_workspace.id).await?;
+        let repos =
+            WorkspaceRepo::find_repos_for_workspace(&self.db.pool, parent_workspace.id).await?;
 
         let ctx = ExecutionContext {
             execution_process,

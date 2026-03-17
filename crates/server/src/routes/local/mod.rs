@@ -5,8 +5,7 @@ use axum::{
     routing::{delete, get, patch, post},
 };
 use chrono::{DateTime, Utc};
-use db::models::project::Project;
-use db::models::workspace::Workspace;
+use db::models::{project::Project, workspace::Workspace};
 use deployment::Deployment;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;

@@ -242,6 +242,7 @@ async fn chat_completion_cli(
     history: &[ChatMessage],
 ) -> Result<Response<Body>, ApiError> {
     use std::process::Stdio;
+
     use tokio::process::Command;
 
     // Build the conversation as a single prompt with context
@@ -258,8 +259,7 @@ async fn chat_completion_cli(
 
     // Resolve the CLI executable using the same approach as the executor system.
     // utils::shell::resolve_executable_path handles Windows .cmd resolution properly.
-    let base_cmd = std::env::var("CLAUDE_CLI_CMD")
-        .unwrap_or_else(|_| "npx".to_string());
+    let base_cmd = std::env::var("CLAUDE_CLI_CMD").unwrap_or_else(|_| "npx".to_string());
 
     let program_path = utils::shell::resolve_executable_path(&base_cmd)
         .await
@@ -409,9 +409,7 @@ async fn chat_completion_anthropic_api(
     history: &[ChatMessage],
 ) -> Result<Response<Body>, ApiError> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        ApiError::BadRequest(
-            "ANTHROPIC_API_KEY environment variable is not set".to_string(),
-        )
+        ApiError::BadRequest("ANTHROPIC_API_KEY environment variable is not set".to_string())
     })?;
 
     let messages: Vec<serde_json::Value> = history

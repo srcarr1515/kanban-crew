@@ -267,7 +267,10 @@ pub trait ContainerService {
         }
 
         // Transition linked task to 'in_review' when execution completes successfully
-        if matches!(ctx.execution_process.status, ExecutionProcessStatus::Completed) {
+        if matches!(
+            ctx.execution_process.status,
+            ExecutionProcessStatus::Completed
+        ) {
             if let Some(task_id) = ctx.workspace.task_id {
                 let _ = sqlx::query(
                     "UPDATE tasks SET status = 'in_review', updated_at = datetime('now', 'subsec') WHERE id = ? AND status = 'in_progress'",

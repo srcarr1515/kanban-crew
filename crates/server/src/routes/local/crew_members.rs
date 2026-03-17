@@ -68,9 +68,15 @@ async fn create_crew_member(
 ) -> Result<ResponseJson<ApiResponse<CrewMember>>, ApiError> {
     let pool = &deployment.db().pool;
     let id = Uuid::new_v4();
-    let avatar = request
-        .avatar
-        .unwrap_or_else(|| request.name.chars().next().unwrap_or('?').to_uppercase().to_string());
+    let avatar = request.avatar.unwrap_or_else(|| {
+        request
+            .name
+            .chars()
+            .next()
+            .unwrap_or('?')
+            .to_uppercase()
+            .to_string()
+    });
     let role_prompt = request.role_prompt.unwrap_or_default();
     let tool_access = request
         .tool_access

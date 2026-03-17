@@ -8,9 +8,9 @@ use crate::{DeploymentImpl, middleware};
 
 pub mod approvals;
 pub mod config;
-pub mod local;
 pub mod containers;
 pub mod filesystem;
+pub mod local;
 // pub mod github;
 pub mod events;
 pub mod execution_processes;
