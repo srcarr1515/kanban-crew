@@ -59,10 +59,8 @@ import { CommandBarDialog } from '@/shared/dialogs/command-bar/CommandBarDialog'
 import { KanbanFiltersDialog } from '@/shared/dialogs/kanban/KanbanFiltersDialog';
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
-  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@vibe/ui/components/Dropdown';
 import { SearchableTagDropdownContainer } from '@/shared/components/SearchableTagDropdownContainer';
@@ -1321,19 +1319,6 @@ export function KanbanContainer() {
                   {t('kanban.defaultRepo', 'Default repository')}
                 </DropdownMenuItem>
               )}
-              {IS_LOCAL_MODE && (
-                <>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuCheckboxItem
-                    checked={autoPickupEnabled}
-                    onCheckedChange={(checked) =>
-                      toggleAutoPickupMutation.mutate(checked === true)
-                    }
-                  >
-                    Auto-pickup tasks
-                  </DropdownMenuCheckboxItem>
-                </>
-              )}
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -1375,6 +1360,12 @@ export function KanbanContainer() {
             onClearFilters={clearKanbanFilters}
             onCreateIssue={handleAddTask}
             shouldAnimateCreateButton={shouldAnimateCreateButton}
+            autoPickupEnabled={autoPickupEnabled}
+            onAutoPickupChange={
+              IS_LOCAL_MODE
+                ? (enabled: boolean) => toggleAutoPickupMutation.mutate(enabled)
+                : undefined
+            }
             renderFiltersDialog={(props) => <KanbanFiltersDialog {...props} />}
             isMobile={isMobile}
           />
