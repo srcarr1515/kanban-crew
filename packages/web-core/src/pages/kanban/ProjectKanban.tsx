@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Group, Layout, Panel, Separator } from 'react-resizable-panels';
 import { ChatTeardropDotsIcon } from '@phosphor-icons/react';
@@ -98,13 +98,14 @@ function ProjectMutationsRegistration({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-function ChatToggleButton() {
+function ChatToggleButton({ rightOffset = 0 }: { rightOffset?: number }) {
   const { toggle, isOpen } = useChatStore();
   return (
     <button
       type="button"
       onClick={toggle}
-      className={`fixed bottom-4 right-4 z-40 flex items-center justify-center size-12 rounded-full shadow-lg transition-colors ${
+      style={{ right: rightOffset + 16 }}
+      className={`fixed bottom-4 z-40 flex items-center justify-center size-12 rounded-full shadow-lg transition-[right,colors] duration-300 ${
         isOpen
           ? 'bg-brand text-white'
           : 'bg-secondary text-normal hover:bg-panel border border-border'
@@ -130,6 +131,26 @@ function ProjectKanbanLayout({ projectName }: { projectName: string }) {
   const isChatFullscreen = useChatStore((s) => s.isFullscreen);
 
   const isRightPanelOpen = isPanelOpen;
+
+  // Track right panel width so the chat FAB/panel can dodge it
+  const rightPanelRef = useRef<HTMLDivElement>(null);
+  const [rightPanelWidth, setRightPanelWidth] = useState(0);
+
+  useEffect(() => {
+    const el = rightPanelRef.current;
+    if (!isRightPanelOpen || !el) {
+      setRightPanelWidth(0);
+      return;
+    }
+
+    const observer = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setRightPanelWidth(entry.contentRect.width);
+      }
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [isRightPanelOpen]);
 
   if (isMobile) {
     return (
@@ -197,17 +218,22 @@ function ProjectKanbanLayout({ projectName }: { projectName: string }) {
             maxSize="800px"
             className="min-w-0 h-full overflow-hidden bg-secondary"
           >
-            <ProjectRightSidebarContainer />
+            <div ref={rightPanelRef} className="h-full w-full">
+              <ProjectRightSidebarContainer />
+            </div>
           </Panel>
         )}
       </Group>
-      {IS_LOCAL_MODE && <ChatToggleButton />}
+      {IS_LOCAL_MODE && <ChatToggleButton rightOffset={rightPanelWidth} />}
       {IS_LOCAL_MODE && isChatOpen && (
-        <div className={
-          isChatFullscreen
-            ? 'fixed inset-0 z-50 bg-primary overflow-hidden flex flex-col'
-            : 'fixed bottom-20 right-4 z-50 w-[420px] h-[1200px] max-h-[calc(100vh-8rem)] rounded-xl border border-border bg-primary shadow-2xl overflow-hidden flex flex-col'
-        }>
+        <div
+          style={!isChatFullscreen ? { right: rightPanelWidth + 16 } : undefined}
+          className={
+            isChatFullscreen
+              ? 'fixed inset-0 z-50 bg-primary overflow-hidden flex flex-col'
+              : 'fixed bottom-20 z-50 w-[420px] h-[1200px] max-h-[calc(100vh-8rem)] rounded-xl border border-border bg-primary shadow-2xl overflow-hidden flex flex-col transition-[right] duration-300'
+          }
+        >
           <ChatPanel />
         </div>
       )}
