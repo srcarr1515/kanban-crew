@@ -835,18 +835,163 @@ export function KanbanContainer() {
     [issuesById, getWorkspacesForIssue, updateIssue, projectId, queryClient]
   );
 
+  // Perform the actual merge operation for a workspace, handling conflicts and rebase.
+  const performMerge = useCallback(
+    async (localWsId: string, workspace: { name: string | null; branch: string }, unmergedRepos: { repo_id: string; repo_name: string; target_branch_name: string }[]) => {
+      for (const repo of unmergedRepos) {
+        try {
+          await workspacesApi.merge(localWsId, {
+            repo_id: repo.repo_id,
+          });
+          toast.success('Branch merged successfully');
+        } catch (err) {
+          if (
+            err instanceof ApiError &&
+            err.error_data &&
+            typeof err.error_data === 'object' &&
+            'type' in err.error_data &&
+            (err.error_data as { type: string }).type === 'merge_conflicts'
+          ) {
+            const conflictData = err.error_data as {
+              conflicted_files: string[];
+              target_branch: string;
+            };
+            const confirmCreate = await ConfirmDialog.show({
+              title: 'Merge Conflicts Detected',
+              message: `Conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
+              confirmText: 'Create Task',
+              cancelText: 'Skip',
+            });
+            if (confirmCreate === 'confirmed') {
+              try {
+                const projects = await listLocalProjects();
+                if (projects.length > 0) {
+                  await createLocalTask({
+                    project_id: projects[0]!.id,
+                    title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
+                    description: `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts directly on the ${conflictData.target_branch} branch.`,
+                    status: 'in_progress',
+                  });
+                }
+              } catch (taskErr) {
+                console.error('Failed to create conflict task:', taskErr);
+              }
+            }
+          } else if (
+            err instanceof ApiError &&
+            err.message &&
+            err.message.includes('commits ahead')
+          ) {
+            try {
+              const rebaseResult = await workspacesApi.rebase(localWsId, {
+                repo_id: repo.repo_id,
+              });
+              if (rebaseResult.success) {
+                try {
+                  await workspacesApi.merge(localWsId, {
+                    repo_id: repo.repo_id,
+                  });
+                  toast.success('Branch rebased and merged successfully');
+                } catch (retryErr) {
+                  if (
+                    retryErr instanceof ApiError &&
+                    retryErr.error_data &&
+                    typeof retryErr.error_data === 'object' &&
+                    'type' in retryErr.error_data &&
+                    (retryErr.error_data as { type: string }).type === 'merge_conflicts'
+                  ) {
+                    const conflictData = retryErr.error_data as {
+                      conflicted_files: string[];
+                      target_branch: string;
+                    };
+                    const confirmCreate = await ConfirmDialog.show({
+                      title: 'Merge Conflicts After Rebase',
+                      message: `Rebased successfully but merge has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
+                      confirmText: 'Create Task',
+                      cancelText: 'Skip',
+                    });
+                    if (confirmCreate === 'confirmed') {
+                      const projects = await listLocalProjects();
+                      if (projects.length > 0) {
+                        await createLocalTask({
+                          project_id: projects[0]!.id,
+                          title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
+                          description: `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts after rebase.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts directly on the ${conflictData.target_branch} branch.`,
+                          status: 'in_progress',
+                        });
+                      }
+                    }
+                  } else {
+                    toast.error('Merge failed after rebase');
+                    console.error('Merge failed after rebase:', retryErr);
+                  }
+                }
+              } else {
+                const rebaseError = rebaseResult.error_data;
+                if (
+                  rebaseError &&
+                  typeof rebaseError === 'object' &&
+                  'type' in rebaseError &&
+                  (rebaseError as { type: string }).type === 'rebase_conflicts'
+                ) {
+                  const conflictData = rebaseError as {
+                    conflicted_files: string[];
+                    target_branch: string;
+                  };
+                  const confirmCreate = await ConfirmDialog.show({
+                    title: 'Rebase Conflicts Detected',
+                    message: `Rebase has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
+                    confirmText: 'Create Task',
+                    cancelText: 'Skip',
+                  });
+                  if (confirmCreate === 'confirmed') {
+                    const projects = await listLocalProjects();
+                    if (projects.length > 0) {
+                      await createLocalTask({
+                        project_id: projects[0]!.id,
+                        title: `Resolve rebase conflicts: ${workspace.name || workspace.branch}`,
+                        description: `Rebase of branch "${workspace.branch}" onto "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts and complete the merge manually.`,
+                        status: 'in_progress',
+                      });
+                    }
+                  }
+                } else {
+                  toast.error('Rebase failed');
+                  console.error('Rebase failed:', rebaseResult);
+                }
+              }
+            } catch (rebaseErr) {
+              toast.error('Rebase request failed');
+              console.error('Rebase request failed:', rebaseErr);
+            }
+          } else {
+            console.error('Merge failed:', err);
+          }
+        }
+      }
+      queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+      queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
+    },
+    [queryClient]
+  );
+
   // Check for unmerged branches when moving a task to "done" from "in_review"
   const triggerMergeOnDone = useCallback(
     async (issueId: string) => {
-      const wsForIssue = getWorkspacesForIssue(issueId);
+      const issue = issuesById.get(issueId);
+      const isSubTask = !!issue?.parent_issue_id;
+      const parentId = isSubTask ? issue.parent_issue_id! : issueId;
+
+      // For sub-tasks, find workspace via parent; for parents, find directly
+      const wsForIssue = isSubTask
+        ? getWorkspacesForIssue(parentId)
+        : getWorkspacesForIssue(issueId);
       if (wsForIssue.length === 0) return;
 
-      // Find workspace IDs (local_workspace_id in the adapted workspace)
       const localWsId = wsForIssue[0]?.local_workspace_id;
       if (!localWsId) return;
 
       try {
-        // Check branch status to see if there are unmerged commits
         const branchStatuses = await workspacesApi.getBranchStatus(localWsId);
         const unmergedRepos = branchStatuses.filter(
           (s) => (s.commits_ahead ?? 0) > 0
@@ -856,205 +1001,131 @@ export function KanbanContainer() {
 
         const workspace = await workspacesApi.get(localWsId);
 
-        // Count active sub-tasks (not done/cancelled) for this issue
-        const activeSubTaskCount = issues.filter(
-          (i) =>
-            i.parent_issue_id === issueId &&
-            i.status_id !== 'done' &&
-            i.status_id !== 'cancelled'
-        ).length;
-
-        const result = await MergeOnDoneDialog.show({
-          workspaceName: workspace.name || workspace.branch,
-          repos: unmergedRepos.map((s) => ({
-            repoId: s.repo_id,
-            repoName: s.repo_name,
-            targetBranch: s.target_branch_name,
-          })),
-          activeSubTaskCount,
-        });
-
-        if (result === 'cancel') {
-          // Revert: move task back to in_review
-          const localHandler = onBulkStatusUpdateRef.current;
-          if (localHandler) {
-            await localHandler([
-              { id: issueId, changes: { status_id: 'in_review' } },
-            ]);
-          }
-          return;
-        }
-
-        if (result === 'merge') {
-          // Merge each unmerged repo
-          for (const repo of unmergedRepos) {
-            try {
-              await workspacesApi.merge(localWsId, {
-                repo_id: repo.repo_id,
-              });
-              toast.success('Branch merged successfully');
-            } catch (err) {
-              // Check for merge conflicts
-              if (
-                err instanceof ApiError &&
-                err.error_data &&
-                typeof err.error_data === 'object' &&
-                'type' in err.error_data &&
-                (err.error_data as { type: string }).type === 'merge_conflicts'
-              ) {
-                const conflictData = err.error_data as {
-                  conflicted_files: string[];
-                  target_branch: string;
-                };
-                // Create a conflict resolution task
-                const confirmCreate = await ConfirmDialog.show({
-                  title: 'Merge Conflicts Detected',
-                  message: `Conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
-                  confirmText: 'Create Task',
-                  cancelText: 'Skip',
-                });
-                if (confirmCreate === 'confirmed') {
-                  try {
-                    const projects = await listLocalProjects();
-                    if (projects.length > 0) {
-                      await createLocalTask({
-                        project_id: projects[0]!.id,
-                        title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
-                        description: `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts directly on the ${conflictData.target_branch} branch.`,
-                        status: 'in_progress',
-                      });
-                    }
-                  } catch (taskErr) {
-                    console.error('Failed to create conflict task:', taskErr);
-                  }
-                }
-              } else if (
-                err instanceof ApiError &&
-                err.message &&
-                err.message.includes('commits ahead')
-              ) {
-                // Branches diverged — auto-rebase then retry merge
-                try {
-                  const rebaseResult = await workspacesApi.rebase(localWsId, {
-                    repo_id: repo.repo_id,
-                  });
-                  if (rebaseResult.success) {
-                    // Retry merge after successful rebase
-                    try {
-                      await workspacesApi.merge(localWsId, {
-                        repo_id: repo.repo_id,
-                      });
-                      toast.success('Branch rebased and merged successfully');
-                    } catch (retryErr) {
-                      // Handle conflicts on the retry
-                      if (
-                        retryErr instanceof ApiError &&
-                        retryErr.error_data &&
-                        typeof retryErr.error_data === 'object' &&
-                        'type' in retryErr.error_data &&
-                        (retryErr.error_data as { type: string }).type === 'merge_conflicts'
-                      ) {
-                        const conflictData = retryErr.error_data as {
-                          conflicted_files: string[];
-                          target_branch: string;
-                        };
-                        const confirmCreate = await ConfirmDialog.show({
-                          title: 'Merge Conflicts After Rebase',
-                          message: `Rebased successfully but merge has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
-                          confirmText: 'Create Task',
-                          cancelText: 'Skip',
-                        });
-                        if (confirmCreate === 'confirmed') {
-                          const projects = await listLocalProjects();
-                          if (projects.length > 0) {
-                            await createLocalTask({
-                              project_id: projects[0]!.id,
-                              title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
-                              description: `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed due to conflicts after rebase.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts directly on the ${conflictData.target_branch} branch.`,
-                              status: 'in_progress',
-                            });
-                          }
-                        }
-                      } else {
-                        toast.error('Merge failed after rebase');
-                        console.error('Merge failed after rebase:', retryErr);
-                      }
-                    }
-                  } else {
-                    // Rebase itself had conflicts
-                    const rebaseError = rebaseResult.error_data;
-                    if (
-                      rebaseError &&
-                      typeof rebaseError === 'object' &&
-                      'type' in rebaseError &&
-                      (rebaseError as { type: string }).type === 'rebase_conflicts'
-                    ) {
-                      const conflictData = rebaseError as {
-                        conflicted_files: string[];
-                        target_branch: string;
-                      };
-                      const confirmCreate = await ConfirmDialog.show({
-                        title: 'Rebase Conflicts Detected',
-                        message: `Rebase has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
-                        confirmText: 'Create Task',
-                        cancelText: 'Skip',
-                      });
-                      if (confirmCreate === 'confirmed') {
-                        const projects = await listLocalProjects();
-                        if (projects.length > 0) {
-                          await createLocalTask({
-                            project_id: projects[0]!.id,
-                            title: `Resolve rebase conflicts: ${workspace.name || workspace.branch}`,
-                            description: `Rebase of branch "${workspace.branch}" onto "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}\n\nResolve these conflicts and complete the merge manually.`,
-                            status: 'in_progress',
-                          });
-                        }
-                      }
-                    } else {
-                      toast.error('Rebase failed');
-                      console.error('Rebase failed:', rebaseResult);
-                    }
-                  }
-                } catch (rebaseErr) {
-                  toast.error('Rebase request failed');
-                  console.error('Rebase request failed:', rebaseErr);
-                }
-              } else {
-                console.error('Merge failed:', err);
-              }
-            }
-          }
-          queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
-          queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
-        }
-
-        // For both 'merge' and 'skip': parent is going to done, so transition
-        // all active sub-tasks to done as well (the branch work is finalized).
-        if (result === 'merge' || result === 'skip') {
-          const activeSubTasks = issues.filter(
+        if (isSubTask) {
+          // Sub-task variant: show "Merge All" dialog
+          const siblingCount = issues.filter(
             (i) =>
-              i.parent_issue_id === issueId &&
-              i.status_id !== 'done' &&
-              i.status_id !== 'cancelled'
-          );
-          if (activeSubTasks.length > 0) {
+              i.parent_issue_id === parentId &&
+              i.id !== issueId
+          ).length;
+
+          const parentIssue = issuesById.get(parentId);
+
+          const result = await MergeOnDoneDialog.show({
+            workspaceName: workspace.name || workspace.branch,
+            repos: unmergedRepos.map((s) => ({
+              repoId: s.repo_id,
+              repoName: s.repo_name,
+              targetBranch: s.target_branch_name,
+            })),
+            subTaskContext: {
+              parentTitle: parentIssue?.title ?? 'Parent task',
+              siblingCount,
+            },
+          });
+
+          if (result === 'cancel') {
             const localHandler = onBulkStatusUpdateRef.current;
             if (localHandler) {
-              await localHandler(
-                activeSubTasks.map((t) => ({
-                  id: t.id,
-                  changes: { status_id: 'done' },
-                }))
-              );
+              await localHandler([
+                { id: issueId, changes: { status_id: 'in_review' } },
+              ]);
             }
-            queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+            return;
+          }
+
+          if (result === 'merge_all') {
+            await performMerge(localWsId, workspace, unmergedRepos);
+
+            // Transition parent + all sub-tasks to done
+            const allRelated = issues.filter(
+              (i) =>
+                (i.id === parentId || i.parent_issue_id === parentId) &&
+                i.status_id !== 'done' &&
+                i.status_id !== 'cancelled'
+            );
+            if (allRelated.length > 0) {
+              const localHandler = onBulkStatusUpdateRef.current;
+              if (localHandler) {
+                await localHandler(
+                  allRelated.map((t) => ({
+                    id: t.id,
+                    changes: { status_id: 'done' },
+                  }))
+                );
+              }
+              queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+            }
+          }
+          // 'skip' (No Thanks) — sub-task moves to done, nothing else happens
+        } else {
+          // Parent/standalone variant: build detailed sub-task status breakdown
+          const subTasks = issues.filter(
+            (i) =>
+              i.parent_issue_id === issueId &&
+              i.status_id !== 'cancelled'
+          );
+
+          const subTaskStatus = subTasks.length > 0 ? {
+            notStarted: subTasks.filter((t) => t.status_id === 'todo' || t.status_id === 'ready').length,
+            inProgress: subTasks.filter((t) => t.status_id === 'in_progress').length,
+            inReview: subTasks.filter((t) => t.status_id === 'in_review').length,
+            done: subTasks.filter((t) => t.status_id === 'done').length,
+            workspaceRunning: !!localWorkspacesById.get(localWsId)?.isRunning,
+          } : undefined;
+
+          const result = await MergeOnDoneDialog.show({
+            workspaceName: workspace.name || workspace.branch,
+            repos: unmergedRepos.map((s) => ({
+              repoId: s.repo_id,
+              repoName: s.repo_name,
+              targetBranch: s.target_branch_name,
+            })),
+            subTaskStatus,
+          });
+
+          if (result === 'cancel') {
+            const localHandler = onBulkStatusUpdateRef.current;
+            if (localHandler) {
+              await localHandler([
+                { id: issueId, changes: { status_id: 'in_review' } },
+              ]);
+            }
+            return;
+          }
+
+          if (result === 'merge') {
+            await performMerge(localWsId, workspace, unmergedRepos);
+          }
+
+          // For both 'merge' and 'skip': parent is going to done, so transition
+          // all active sub-tasks to done as well (the branch work is finalized).
+          if (result === 'merge' || result === 'skip') {
+            const activeSubTasks = issues.filter(
+              (i) =>
+                i.parent_issue_id === issueId &&
+                i.status_id !== 'done' &&
+                i.status_id !== 'cancelled'
+            );
+            if (activeSubTasks.length > 0) {
+              const localHandler = onBulkStatusUpdateRef.current;
+              if (localHandler) {
+                await localHandler(
+                  activeSubTasks.map((t) => ({
+                    id: t.id,
+                    changes: { status_id: 'done' },
+                  }))
+                );
+              }
+              queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+            }
           }
         }
       } catch (err) {
         console.error('[MergeOnDone] Failed to check branch status:', err);
       }
     },
-    [getWorkspacesForIssue, issues, queryClient]
+    [getWorkspacesForIssue, issues, issuesById, localWorkspacesById, queryClient, performMerge]
   );
 
   // Simple onDragEnd handler - the library handles all visual movement

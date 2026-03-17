@@ -73,7 +73,8 @@ import posthog from 'posthog-js';
 import { WorkspacesGuideDialog } from '@/shared/dialogs/shared/WorkspacesGuideDialog';
 import { SettingsDialog } from '@/shared/dialogs/settings/SettingsDialog';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
-import { createLocalTask, listLocalProjects } from '@/shared/lib/local/localApi';
+import { createLocalTask, listLocalProjects, listLocalTasks, bulkUpdateLocalTasks } from '@/shared/lib/local/localApi';
+import { MergeOnDoneDialog } from '@/shared/dialogs/kanban/MergeOnDoneDialog';
 import { ApiError } from '@/shared/lib/api';
 import { CreateWorkspaceFromPrDialog } from '@/shared/dialogs/command-bar/CreateWorkspaceFromPrDialog';
 import { buildWorkspaceCreateInitialState } from '@/shared/lib/workspaceCreateState';
@@ -1013,6 +1014,137 @@ export const Actions = {
           });
         }
         return;
+      }
+
+      // In local mode, check if this workspace is linked to a sub-task
+      // and show the "Merge All" dialog if so.
+      if (IS_LOCAL_MODE) {
+        const workspace = await getWorkspace(ctx.queryClient, workspaceId);
+        const taskId = workspace.task_id;
+
+        if (taskId) {
+          const projects = await listLocalProjects();
+          const projectId = projects[0]?.id;
+          if (projectId) {
+            const allTasks = await listLocalTasks(projectId);
+            const linkedTask = allTasks.find((t) => t.id === taskId);
+            // Resolve the parent: if linked task is a sub-task use its parent,
+            // otherwise check if the linked task itself has sub-tasks.
+            const parentTaskId = linkedTask?.parent_task_id;
+            const parentTask = parentTaskId
+              ? allTasks.find((t) => t.id === parentTaskId)
+              : linkedTask;
+            const isSubTaskWorkspace = !!parentTaskId;
+            const effectiveParentId = parentTaskId ?? taskId;
+
+            const siblings = allTasks.filter(
+              (t) => t.parent_task_id === effectiveParentId
+            );
+
+            if (isSubTaskWorkspace || siblings.length > 0) {
+              // Show the Merge All dialog
+              const siblingCount = isSubTaskWorkspace
+                ? siblings.filter((t) => t.id !== taskId).length
+                : siblings.length;
+
+              const unmergedRepos = repoStatus
+                ? [
+                    {
+                      repoId: repoStatus.repo_id,
+                      repoName: repoStatus.repo_name,
+                      targetBranch: repoStatus.target_branch_name,
+                    },
+                  ]
+                : [];
+
+              const result = await MergeOnDoneDialog.show({
+                workspaceName: workspace.name || workspace.branch,
+                repos: unmergedRepos,
+                subTaskContext: {
+                  parentTitle: parentTask?.title ?? 'Parent task',
+                  siblingCount,
+                },
+              });
+
+              if (result === 'cancel') return;
+
+              if (result === 'merge_all') {
+                try {
+                  await workspacesApi.merge(workspaceId, { repo_id: repoId });
+                  invalidateWorkspaceQueries(ctx.queryClient, workspaceId);
+                  toast.success('Branch merged successfully');
+                } catch (mergeErr) {
+                  if (
+                    mergeErr instanceof ApiError &&
+                    mergeErr.message &&
+                    (mergeErr.message.includes('commits ahead') || mergeErr.status === 409)
+                  ) {
+                    try {
+                      const rebaseResult = await workspacesApi.rebase(workspaceId, { repo_id: repoId });
+                      if (rebaseResult.success) {
+                        await workspacesApi.merge(workspaceId, { repo_id: repoId });
+                        invalidateWorkspaceQueries(ctx.queryClient, workspaceId);
+                        toast.success('Branch rebased and merged successfully');
+                      } else {
+                        toast.error('Rebase failed — resolve conflicts manually');
+                        return;
+                      }
+                    } catch {
+                      toast.error('Merge failed after rebase');
+                      return;
+                    }
+                  } else if (
+                    mergeErr instanceof ApiError &&
+                    mergeErr.error_data &&
+                    typeof mergeErr.error_data === 'object' &&
+                    'type' in mergeErr.error_data &&
+                    (mergeErr.error_data as { type: string }).type === 'merge_conflicts'
+                  ) {
+                    const conflictData = mergeErr.error_data as {
+                      conflicted_files: string[];
+                      target_branch: string;
+                    };
+                    const confirmCreate = await ConfirmDialog.show({
+                      title: 'Merge Conflicts Detected',
+                      message: `Conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
+                      confirmText: 'Create Task',
+                      cancelText: 'Skip',
+                    });
+                    if (confirmCreate === 'confirmed') {
+                      await createLocalTask({
+                        project_id: projectId,
+                        title: `Resolve merge conflicts: ${workspace.name || workspace.branch}`,
+                        description: `Merge of branch "${workspace.branch}" into "${conflictData.target_branch}" failed.\n\nConflicted files:\n${conflictData.conflicted_files.map((f) => `- ${f}`).join('\n')}`,
+                        status: 'in_progress',
+                      });
+                      ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+                    }
+                    return;
+                  } else {
+                    throw mergeErr;
+                  }
+                }
+
+                // Transition parent + all sub-tasks to done
+                const toDone = allTasks.filter(
+                  (t) =>
+                    (t.id === effectiveParentId || t.parent_task_id === effectiveParentId) &&
+                    t.status !== 'done' &&
+                    t.status !== 'cancelled'
+                );
+                if (toDone.length > 0) {
+                  await bulkUpdateLocalTasks(
+                    toDone.map((t) => ({ id: t.id, status: 'done' }))
+                  );
+                }
+                ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+                ctx.queryClient.invalidateQueries({ queryKey: ['local', 'workspaces'] });
+              }
+              // 'skip' (No Thanks) — do nothing, just close
+              return;
+            }
+          }
+        }
       }
 
       const confirmResult = await ConfirmDialog.show({
