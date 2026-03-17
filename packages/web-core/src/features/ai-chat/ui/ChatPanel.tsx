@@ -36,7 +36,7 @@ export function ChatPanel() {
   const abortRef = useRef(false);
 
   // ── Threads ──────────────────────────────────────────────────────
-  const { data: threads = [] } = useQuery({
+  const { data: threads = [], isPending: isThreadsPending } = useQuery({
     queryKey: ['chat-threads', projectId],
     queryFn: () => listChatThreads(projectId),
     refetchOnWindowFocus: false,
@@ -70,6 +70,9 @@ export function ChatPanel() {
   // Auto-select or auto-create a thread
   const autoCreatingRef = useRef(false);
   useEffect(() => {
+    // Wait for threads to load before deciding to auto-create
+    if (isThreadsPending) return;
+
     if (threads.length > 0) {
       if (!activeThreadId || !threads.find((t) => t.id === activeThreadId)) {
         setActiveThread(threads[0].id);
@@ -86,7 +89,7 @@ export function ChatPanel() {
     }).catch(() => {
       autoCreatingRef.current = false;
     });
-  }, [threads, activeThreadId, setActiveThread]);
+  }, [threads, activeThreadId, setActiveThread, isThreadsPending]);
 
   // ── Delete thread ────────────────────────────────────────────────
   const handleDeleteThread = useCallback(
