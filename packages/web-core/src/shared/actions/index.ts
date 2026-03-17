@@ -1,4 +1,5 @@
 import { forwardRef, createElement } from 'react';
+import { toast } from 'sonner';
 import type { Icon, IconProps } from '@phosphor-icons/react';
 import type { ExecutorConfig, Merge, Workspace } from 'shared/types';
 import type { QueryClient } from '@tanstack/react-query';
@@ -1028,6 +1029,7 @@ export const Actions = {
           invalidateWorkspaceQueries(ctx.queryClient, workspaceId);
           if (IS_LOCAL_MODE) {
             ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+            toast.success('Branch merged successfully');
           }
         } catch (err) {
           // Check if this is a merge conflict with structured error data
@@ -1073,6 +1075,95 @@ export const Actions = {
                 }
               } catch (taskErr) {
                 console.error('Failed to create conflict resolution task:', taskErr);
+              }
+            }
+          } else if (
+            IS_LOCAL_MODE &&
+            err instanceof ApiError &&
+            err.message &&
+            (err.message.includes('commits ahead') || err.status === 409)
+          ) {
+            // Branches diverged — auto-rebase then retry merge
+            try {
+              const rebaseResult = await workspacesApi.rebase(workspaceId, {
+                repo_id: repoId,
+              });
+              if (rebaseResult.success) {
+                // Retry merge after successful rebase
+                await workspacesApi.merge(workspaceId, { repo_id: repoId });
+                invalidateWorkspaceQueries(ctx.queryClient, workspaceId);
+                if (IS_LOCAL_MODE) {
+                  ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+                }
+                toast.success('Branch rebased and merged successfully');
+              } else {
+                // Rebase had conflicts — offer to create a task
+                const rebaseError = rebaseResult.error_data;
+                if (
+                  rebaseError &&
+                  typeof rebaseError === 'object' &&
+                  'conflicted_files' in rebaseError
+                ) {
+                  const conflictData = rebaseError as {
+                    conflicted_files: string[];
+                    target_branch: string;
+                  };
+                  const workspace = await getWorkspace(ctx.queryClient, workspaceId);
+                  const result = await ConfirmDialog.show({
+                    title: 'Rebase Conflicts Detected',
+                    message: `Rebase has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
+                    confirmText: 'Create Task',
+                    cancelText: 'Skip',
+                  });
+                  if (result === 'confirmed') {
+                    const projects = await listLocalProjects();
+                    if (projects.length > 0) {
+                      await createLocalTask({
+                        project_id: projects[0]!.id,
+                        title: `Resolve rebase conflicts: ${workspace.name || workspace.branch}`,
+                        description: `Rebase of branch "${workspace.branch}" onto "${conflictData.target_branch}" failed due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f: string) => `- ${f}`).join('\n')}\n\nResolve these conflicts and complete the merge manually.`,
+                        status: 'in_progress',
+                      });
+                      ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+                    }
+                  }
+                }
+              }
+            } catch (rebaseErr) {
+              // If the retry merge after rebase also fails with conflicts
+              if (
+                rebaseErr instanceof ApiError &&
+                rebaseErr.error_data &&
+                typeof rebaseErr.error_data === 'object' &&
+                'type' in rebaseErr.error_data &&
+                (rebaseErr.error_data as { type: string }).type === 'merge_conflicts'
+              ) {
+                const conflictData = rebaseErr.error_data as {
+                  conflicted_files: string[];
+                  target_branch: string;
+                };
+                const workspace = await getWorkspace(ctx.queryClient, workspaceId);
+                const result = await ConfirmDialog.show({
+                  title: 'Merge Conflicts After Rebase',
+                  message: `Rebased successfully but merge has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,
+                  confirmText: 'Create Task',
+                  cancelText: 'Skip',
+                });
+                if (result === 'confirmed') {
+                  const projects = await listLocalProjects();
+                  if (projects.length > 0) {
+                    await createLocalTask({
+                      project_id: projects[0]!.id,
+                      title: `Resolve merge conflicts: ${(await getWorkspace(ctx.queryClient, workspaceId)).name || 'workspace'}`,
+                      description: `Merge failed after rebase due to conflicts.\n\nConflicted files:\n${conflictData.conflicted_files.map((f: string) => `- ${f}`).join('\n')}`,
+                      status: 'in_progress',
+                    });
+                    ctx.queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
+                  }
+                }
+              } else {
+                toast.error('Merge failed after rebase');
+                throw rebaseErr;
               }
             }
           } else {

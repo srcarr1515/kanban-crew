@@ -15,6 +15,7 @@ import { ExecutionProcessesProvider } from '@/shared/providers/ExecutionProcesse
 import { LogsPanelProvider } from '@/shared/providers/LogsPanelProvider';
 import { ActionsProvider } from '@/shared/providers/ActionsProvider';
 import { UserProvider } from '@/shared/providers/remote/UserProvider';
+import { Toaster } from 'sonner';
 import '@/app/styles/new/index.css';
 
 function ExecutionProcessesProviderWrapper({
@@ -87,6 +88,7 @@ function RootRouteComponent() {
                 <ActionsProvider>
                   <NiceModalProvider>
                     <Outlet />
+                    <Toaster theme="dark" position="bottom-right" />
                   </NiceModalProvider>
                 </ActionsProvider>
               </UserProvider>

@@ -39,6 +39,7 @@ export function LocalProjectProvider({
     queryKey,
     queryFn: () => listLocalTasks(projectId),
     enabled: Boolean(projectId),
+    refetchInterval: 3000,
   });
 
   const issues = useMemo<Issue[]>(
