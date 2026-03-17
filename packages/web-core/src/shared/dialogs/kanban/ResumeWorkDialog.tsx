@@ -14,7 +14,6 @@ import { useState } from 'react';
 
 export type ResumeWorkResult =
   | { type: 'subtask'; subtaskId: string }
-  | { type: 'parent' }
   | { type: 'cancel' };
 
 export interface SubTaskInfo {
@@ -63,11 +62,6 @@ const ResumeWorkDialogImpl = create<ResumeWorkDialogProps>((props) => {
 
   const handleCancel = () => {
     modal.resolve({ type: 'cancel' } as ResumeWorkResult);
-    modal.hide();
-  };
-
-  const handleParent = () => {
-    modal.resolve({ type: 'parent' } as ResumeWorkResult);
     modal.hide();
   };
 
@@ -161,14 +155,9 @@ const ResumeWorkDialogImpl = create<ResumeWorkDialogProps>((props) => {
           <Button variant="outline" onClick={handleCancel}>
             Cancel
           </Button>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={handleParent}>
-              Work on Parent
-            </Button>
-            <Button onClick={handleStart} disabled={!selectedId}>
-              Start Sub-task
-            </Button>
-          </div>
+          <Button onClick={handleStart} disabled={!selectedId}>
+            Start Sub-task
+          </Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

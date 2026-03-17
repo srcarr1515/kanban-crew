@@ -683,9 +683,9 @@ export function KanbanContainer() {
             // Re-link workspace to the sub-task
             await linkWorkspaceToTask(result.subtaskId, parentWsId);
 
-            // Move sub-task to in_progress, parent to in_review
+            // Move sub-task to in_progress; parent stays in_progress
+            // (parent will transition to in_review once all sub-tasks complete)
             updateIssue(result.subtaskId, { status_id: 'in_progress' });
-            updateIssue(issueId, { status_id: 'in_review' });
 
             // Get the session for follow-up
             const sessions = await sessionsApi.getByWorkspace(parentWsId);
@@ -737,8 +737,7 @@ export function KanbanContainer() {
         return true; // handled — don't auto-create for parent
       }
 
-      // result.type === 'parent' — fall through to normal auto-create
-      return false;
+      return true; // cancel was handled above
     },
     [issues, issuesById, updateIssue, getWorkspacesForIssue, triggerAutoCreate, projectId, queryClient]
   );
@@ -783,10 +782,8 @@ export function KanbanContainer() {
         try {
           await linkWorkspaceToTask(issueId, parentWsId);
 
-          // Transition parent to in_review
-          if (issue.parent_issue_id) {
-            updateIssue(issue.parent_issue_id, { status_id: 'in_review' });
-          }
+          // Parent stays in_progress — it will transition to in_review
+          // once all sub-tasks are complete.
 
           // Send follow-up prompt
           const sessions = await sessionsApi.getByWorkspace(parentWsId);
