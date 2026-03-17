@@ -280,12 +280,31 @@ async fn chat_completion_cli(
 
     use tokio::process::Command;
 
-    // Build conversation history as the user prompt
+    // Resolve the CLI executable using the same approach as the executor system.
+    // utils::shell::resolve_executable_path handles Windows .cmd resolution properly.
+    let base_cmd = std::env::var("CLAUDE_CLI_CMD").unwrap_or_else(|_| "npx".to_string());
+
+    let program_path = utils::shell::resolve_executable_path(&base_cmd)
+        .await
+        .ok_or_else(|| ApiError::BadRequest(format!("Could not find executable: {base_cmd}")))?;
+
+    // Detect if this is Claude Code CLI — it supports --system-prompt for proper
+    // system context separation. Other CLIs (Codex, etc.) don't, so we embed the
+    // system prompt in the conversation text as the universal fallback.
+    let is_claude_cli = base_cmd == "npx"
+        || base_cmd.contains("claude")
+        || std::env::var("CHAT_CLI_TYPE")
+            .map(|v| v == "claude")
+            .unwrap_or(false);
+    // Windows .cmd batch files mangle special characters in args, so always
+    // embed via stdin there. On other platforms, use the flag if under arg limit.
+    let use_system_flag =
+        is_claude_cli && system_prompt.len() < 7000 && !cfg!(target_os = "windows");
+
+    // Build conversation prompt
     let mut prompt = String::new();
-    // If system prompt is too long for a CLI arg (Windows limit ~8191 chars),
-    // embed it in the conversation prompt as a fallback
-    let system_prompt_via_flag = system_prompt.len() < 7000;
-    if !system_prompt_via_flag {
+    if !use_system_flag {
+        // Embed system prompt in conversation text (universal approach)
         prompt.push_str(system_prompt);
         prompt.push_str("\n\n");
     }
@@ -300,14 +319,6 @@ async fn chat_completion_cli(
     }
     prompt.push_str("\nAssistant: ");
 
-    // Resolve the CLI executable using the same approach as the executor system.
-    // utils::shell::resolve_executable_path handles Windows .cmd resolution properly.
-    let base_cmd = std::env::var("CLAUDE_CLI_CMD").unwrap_or_else(|_| "npx".to_string());
-
-    let program_path = utils::shell::resolve_executable_path(&base_cmd)
-        .await
-        .ok_or_else(|| ApiError::BadRequest(format!("Could not find executable: {base_cmd}")))?;
-
     let mut cmd = Command::new(program_path);
     // If using npx (default), add the package args
     if base_cmd == "npx" {
@@ -318,8 +329,8 @@ async fn chat_completion_cli(
         "--verbose",
         "--dangerously-skip-permissions",
     ]);
-    // Pass the system prompt via the dedicated flag so it stays in proper system context
-    if system_prompt_via_flag {
+    // Claude Code CLI: use dedicated flag for proper system context separation
+    if use_system_flag {
         cmd.args(["--system-prompt", system_prompt]);
     }
     // Use stdin for the prompt to avoid Windows .cmd argument escaping issues

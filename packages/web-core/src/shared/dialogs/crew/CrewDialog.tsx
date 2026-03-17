@@ -554,6 +554,7 @@ function MembersSection() {
     }) => updateCrewMember(id, changes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: CREW_MEMBERS_KEY });
+      setExpandedId(null);
     },
   });
 
