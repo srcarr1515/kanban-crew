@@ -711,6 +711,43 @@ impl GitCli {
         }
         Ok(files)
     }
+
+    /// Return `git diff --stat <from_commit>..HEAD` output as a string.
+    pub fn diff_stat(
+        &self,
+        worktree_path: &Path,
+        from_commit: &str,
+    ) -> Result<String, GitCliError> {
+        self.git(
+            worktree_path,
+            ["diff", "--stat", &format!("{from_commit}..HEAD")],
+        )
+    }
+
+    /// Return commit messages from `from_commit..HEAD` as a list of one-line summaries.
+    pub fn log_oneline(
+        &self,
+        worktree_path: &Path,
+        from_commit: &str,
+    ) -> Result<Vec<String>, GitCliError> {
+        let out = self.git(
+            worktree_path,
+            [
+                "log",
+                "--oneline",
+                "--no-decorate",
+                &format!("{from_commit}..HEAD"),
+            ],
+        )?;
+        Ok(out
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| {
+                // Strip the short SHA prefix: "abc1234 message" -> "message"
+                l.split_once(' ').map_or(l, |(_, msg)| msg).to_string()
+            })
+            .collect())
+    }
 }
 
 // Private methods

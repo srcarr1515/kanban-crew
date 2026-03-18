@@ -71,7 +71,7 @@ import { DefaultRepoDialog } from '@/shared/components/DefaultRepoDialog';
 import { workspacesApi, sessionsApi, configApi } from '@/shared/lib/api';
 import { ApiError } from '@/shared/lib/api';
 import { getAutoCreateExecutor } from '@/shared/components/DefaultRepoDialog';
-import { linkWorkspaceToTask } from '@/shared/lib/local/localApi';
+import { linkWorkspaceToTask, listTaskComments } from '@/shared/lib/local/localApi';
 import type { BaseCodingAgent } from 'shared/types';
 import { MergeOnDoneDialog } from '@/shared/dialogs/kanban/MergeOnDoneDialog';
 import { ResumeWorkDialog } from '@/shared/dialogs/kanban/ResumeWorkDialog';
@@ -646,6 +646,68 @@ export function KanbanContainer() {
     [statusColumnIndexMap]
   );
 
+  // Build "Implementation Notes from Completed Sub-tasks" section for prompts.
+  // Fetches the most recent agent comment from each completed/in_review sibling.
+  const buildSiblingCommentsSection = useCallback(
+    async (parentIssueId: string, currentTaskId: string): Promise<string> => {
+      const siblingTasks = issues.filter(
+        (i) =>
+          i.parent_issue_id === parentIssueId &&
+          i.id !== currentTaskId &&
+          (i.status_id === 'in_review' || i.status_id === 'done')
+      );
+
+      if (siblingTasks.length === 0) return '';
+
+      const entries: { title: string; status: string; content: string }[] = [];
+      for (const sib of siblingTasks) {
+        try {
+          const comments = await listTaskComments(sib.id);
+          // Get the most recent agent comment
+          const agentComments = comments.filter((c) => c.author_type === 'agent');
+          const latest = agentComments[agentComments.length - 1];
+          if (latest) {
+            entries.push({
+              title: sib.title,
+              status: sib.status_id,
+              content: latest.content,
+            });
+          }
+        } catch {
+          // Skip siblings whose comments fail to load
+        }
+      }
+
+      if (entries.length === 0) return '';
+
+      // Truncate older siblings first to stay under ~2000 chars total
+      const MAX_TOTAL = 2000;
+      const totalLen = entries.reduce((sum, e) => sum + e.content.length, 0);
+      if (totalLen > MAX_TOTAL) {
+        let remaining = MAX_TOTAL;
+        for (let i = entries.length - 1; i >= 0; i--) {
+          if (remaining === 0) {
+            entries[i].content = '[truncated]';
+          } else if (entries[i].content.length > remaining) {
+            entries[i].content =
+              entries[i].content.slice(0, remaining) + '...[truncated]';
+            remaining = 0;
+          } else {
+            remaining -= entries[i].content.length;
+          }
+        }
+      }
+
+      let section = '\n## Implementation Notes from Completed Sub-tasks\n';
+      for (const e of entries) {
+        const marker = e.status === 'done' ? 'done' : 'in review';
+        section += `### Sub-task: "${e.title}" (${marker})\n${e.content}\n\n`;
+      }
+      return section;
+    },
+    [issues]
+  );
+
   // When a parent ticket with sub-tasks is dragged to "in_progress", let the
   // user choose which sub-task the agent should work on first.
   const triggerResumeWork = useCallback(
@@ -732,6 +794,12 @@ export function KanbanContainer() {
                 })
                 .join('\n');
 
+              // Fetch completed sibling comments for context
+              const siblingCommentsSection = await buildSiblingCommentsSection(
+                issueId,
+                result.subtaskId
+              );
+
               let prompt = `You are working on a sub-task as part of a larger effort.\n\n`;
               prompt += `## Parent Task\nTitle: ${issue.title}\n`;
               if (issue.description) {
@@ -739,6 +807,9 @@ export function KanbanContainer() {
               }
               if (siblingLines) {
                 prompt += `\n## Sub-tasks\n${siblingLines}\n`;
+              }
+              if (siblingCommentsSection) {
+                prompt += siblingCommentsSection;
               }
               prompt += `\n## Your Task\nImplement the following:\n\nTitle: ${subTitle}\n`;
               if (subDesc) {
@@ -774,7 +845,7 @@ export function KanbanContainer() {
 
       return true; // cancel was handled above
     },
-    [issues, issuesById, updateIssue, getWorkspacesForIssue, triggerAutoCreate, projectId, queryClient]
+    [issues, issuesById, updateIssue, getWorkspacesForIssue, triggerAutoCreate, projectId, queryClient, buildSiblingCommentsSection]
   );
 
   // When a sub-task is dragged to "in_progress", ask whether to reuse the
@@ -861,6 +932,12 @@ export function KanbanContainer() {
               })
               .join('\n');
 
+            // Fetch completed sibling comments for context
+            const siblingCommentsSection = await buildSiblingCommentsSection(
+              issue.parent_issue_id!,
+              issueId
+            );
+
             let prompt = `You are working on a sub-task as part of a larger effort.\n\n`;
             prompt += `## Parent Task\nTitle: ${parentIssue?.title ?? 'Parent task'}\n`;
             if (parentIssue?.description) {
@@ -868,6 +945,9 @@ export function KanbanContainer() {
             }
             if (siblingLines) {
               prompt += `\n## Sub-tasks\n${siblingLines}\n`;
+            }
+            if (siblingCommentsSection) {
+              prompt += siblingCommentsSection;
             }
             prompt += `\n## Your Task\nImplement the following:\n\nTitle: ${issue.title}\n`;
             if (issue.description) {
@@ -897,7 +977,7 @@ export function KanbanContainer() {
       // result === 'new' — fall through to normal auto-create
       return false;
     },
-    [issuesById, getWorkspacesForIssue, updateIssue, projectId, queryClient]
+    [issuesById, getWorkspacesForIssue, updateIssue, projectId, queryClient, buildSiblingCommentsSection]
   );
 
   // Perform the actual merge operation for a workspace, handling conflicts and rebase.

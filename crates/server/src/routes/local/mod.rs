@@ -24,6 +24,7 @@ where
 
 pub mod chat;
 pub mod crew_members;
+pub mod task_comments;
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -117,6 +118,7 @@ pub fn router() -> Router<DeploymentImpl> {
         )
         .merge(chat::router())
         .merge(crew_members::router())
+        .merge(task_comments::router())
 }
 
 // ── Handlers ─────────────────────────────────────────────────────────────────

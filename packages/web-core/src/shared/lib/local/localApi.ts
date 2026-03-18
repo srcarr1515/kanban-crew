@@ -199,3 +199,28 @@ export function deleteCrewMember(id: string): Promise<void> {
     method: 'DELETE',
   });
 }
+
+// ── Task Comments ────────────────────────────────────────────────────────────
+
+export interface TaskComment {
+  id: string;
+  task_id: string;
+  author_type: string;
+  author_name: string;
+  content: string;
+  created_at: string;
+}
+
+export function listTaskComments(taskId: string): Promise<TaskComment[]> {
+  return localFetch<TaskComment[]>(`/api/local/tasks/${taskId}/comments`);
+}
+
+export function createTaskComment(
+  taskId: string,
+  data: { author_type: string; author_name: string; content: string },
+): Promise<TaskComment> {
+  return localFetch<TaskComment>(`/api/local/tasks/${taskId}/comments`, {
+    method: 'POST',
+    body: JSON.stringify(data),
+  });
+}

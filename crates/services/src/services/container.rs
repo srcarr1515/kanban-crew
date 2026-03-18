@@ -19,6 +19,7 @@ use db::{
         },
         repo::Repo,
         session::{CreateSession, Session, SessionError},
+        task_comment::TaskComment,
         workspace::{Workspace, WorkspaceError},
         workspace_repo::WorkspaceRepo,
     },
@@ -44,7 +45,7 @@ use executors::{
     profile::{ExecutorConfig, ExecutorProfileId},
 };
 use futures::{StreamExt, future, stream::BoxStream};
-use git::{GitService, GitServiceError};
+use git::{GitCli, GitService, GitServiceError};
 use json_patch::Patch;
 use sqlx::Error as SqlxError;
 use thiserror::Error;
@@ -314,6 +315,14 @@ pub trait ContainerService {
                         .await;
                     }
                 }
+
+                // Auto-post agent summary comment for CodingAgent completions
+                if matches!(
+                    ctx.execution_process.run_reason,
+                    ExecutionProcessRunReason::CodingAgent
+                ) {
+                    self.post_agent_summary_comment(ctx, task_id).await;
+                }
             }
         }
 
@@ -343,6 +352,112 @@ pub trait ContainerService {
         self.notification_service()
             .notify(&title, &message, Some(ctx.workspace.id))
             .await;
+    }
+
+    /// Post an agent summary comment on a task after a CodingAgent execution completes.
+    /// Gathers diff stats and commit messages from the worktree to build the summary.
+    async fn post_agent_summary_comment(&self, ctx: &ExecutionContext, task_id: Uuid) {
+        let container_ref = match ctx.workspace.container_ref.as_ref() {
+            Some(cr) => cr,
+            None => return,
+        };
+
+        let git = GitCli::new();
+        let workspace_root = PathBuf::from(container_ref);
+
+        // Look up the before-commit for this execution to scope the diff
+        let repo_states = ExecutionProcessRepoState::find_by_execution_process_id(
+            &self.db().pool,
+            ctx.execution_process.id,
+        )
+        .await
+        .unwrap_or_default();
+
+        let mut all_diff_stats = Vec::new();
+        let mut all_commits = Vec::new();
+
+        for repo in &ctx.repos {
+            let worktree_path = workspace_root.join(&repo.name);
+
+            // Find the before-commit for this repo from the execution's repo state
+            let before_commit = repo_states
+                .iter()
+                .find(|rs| rs.repo_id == repo.id)
+                .and_then(|rs| rs.before_head_commit.as_deref());
+
+            let from_ref = match before_commit {
+                Some(c) => c.to_string(),
+                None => continue,
+            };
+
+            // Gather diff --stat
+            if let Ok(stat) = git.diff_stat(&worktree_path, &from_ref) {
+                let trimmed = stat.trim();
+                if !trimmed.is_empty() {
+                    if ctx.repos.len() > 1 {
+                        all_diff_stats.push(format!("**{}**\n```\n{}\n```", repo.name, trimmed));
+                    } else {
+                        all_diff_stats.push(format!("```\n{}\n```", trimmed));
+                    }
+                }
+            }
+
+            // Gather commit messages
+            if let Ok(messages) = git.log_oneline(&worktree_path, &from_ref) {
+                for msg in messages {
+                    all_commits.push(format!("- {}", msg));
+                }
+            }
+        }
+
+        // Only post if there's something meaningful to report
+        if all_diff_stats.is_empty() && all_commits.is_empty() {
+            return;
+        }
+
+        let mut content = String::from("## Implementation Summary\n");
+
+        if !all_commits.is_empty() {
+            content.push_str("\n### Commits\n");
+            // Cap at 20 commits to keep it concise
+            for commit in all_commits.iter().take(20) {
+                content.push_str(commit);
+                content.push('\n');
+            }
+            if all_commits.len() > 20 {
+                content.push_str(&format!("- ...and {} more\n", all_commits.len() - 20));
+            }
+        }
+
+        if !all_diff_stats.is_empty() {
+            content.push_str("\n### Files Changed\n");
+            for stat in &all_diff_stats {
+                content.push_str(stat);
+                content.push('\n');
+            }
+        }
+
+        let author_name = ctx
+            .session
+            .executor
+            .as_deref()
+            .unwrap_or("Claude Code");
+
+        if let Err(e) = TaskComment::create(
+            &self.db().pool,
+            task_id,
+            "agent",
+            author_name,
+            content.trim(),
+        )
+        .await
+        {
+            tracing::warn!(
+                "finalize_task: failed to post agent summary comment for task {}: {}",
+                task_id,
+                e
+            );
+        }
     }
 
     /// Cleanup executions marked as running in the db, call at startup

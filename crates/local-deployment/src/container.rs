@@ -20,6 +20,7 @@ use db::{
         repo::Repo,
         scratch::{DraftFollowUpData, Scratch, ScratchType},
         session::{CreateSession, Session, SessionError},
+        task_comment::TaskComment,
         workspace::Workspace,
         workspace_repo::WorkspaceRepo,
     },
@@ -743,10 +744,16 @@ impl LocalContainerService {
                         })
                         .collect();
 
+                    // Include agent comments from completed siblings (if any)
+                    let sibling_comments = self
+                        .build_sibling_comments_section(selected_task_id, sub_id)
+                        .await;
+
                     let context = format!(
                         "You are working on the first sub-task of a larger effort.\n\n\
                          ## Parent Task\nTitle: {}\n{}\n\
-                         ## Sub-tasks\n{}\n\n\
+                         ## Sub-tasks\n{}\n\
+                         {}\
                          ## Your Task\n",
                         selected_task_title,
                         task_description
@@ -754,6 +761,11 @@ impl LocalContainerService {
                             .map(|d| format!("Description: {d}\n"))
                             .unwrap_or_default(),
                         sibling_lines.join("\n"),
+                        if sibling_comments.is_empty() {
+                            String::from("\n")
+                        } else {
+                            sibling_comments
+                        },
                     );
 
                     (sub_title, sub_desc, Some(context))
@@ -817,6 +829,88 @@ impl LocalContainerService {
                 tracing::error!("Auto-pickup: failed to start workspace: {e}");
             }
         }
+    }
+
+    /// Build "Implementation Notes from Completed Sub-tasks" section for the prompt.
+    /// Fetches the most recent agent comment from each completed/in_review sibling,
+    /// truncating older siblings first if total content exceeds ~2000 chars.
+    async fn build_sibling_comments_section(
+        &self,
+        parent_task_id: Uuid,
+        current_task_id: Uuid,
+    ) -> String {
+        // Fetch completed/in_review siblings (excluding the current task)
+        let siblings: Vec<(Uuid, String, String)> = sqlx::query_as(
+            r#"SELECT id, title, status FROM tasks
+               WHERE parent_task_id = ?
+                 AND id != ?
+                 AND status IN ('in_review', 'done')
+               ORDER BY parent_task_sort_order ASC, created_at ASC"#,
+        )
+        .bind(parent_task_id)
+        .bind(current_task_id)
+        .fetch_all(&self.db.pool)
+        .await
+        .unwrap_or_default();
+
+        if siblings.is_empty() {
+            return String::new();
+        }
+
+        // For each sibling, get the most recent agent comment
+        let mut entries: Vec<(String, String, String)> = Vec::new(); // (title, status, content)
+        for (sib_id, sib_title, sib_status) in &siblings {
+            let comment: Option<TaskComment> = sqlx::query_as::<_, TaskComment>(
+                r#"SELECT id, task_id, author_type, author_name, content, created_at
+                   FROM task_comments
+                   WHERE task_id = ? AND author_type = 'agent'
+                   ORDER BY created_at DESC
+                   LIMIT 1"#,
+            )
+            .bind(sib_id)
+            .fetch_optional(&self.db.pool)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(c) = comment {
+                entries.push((sib_title.clone(), sib_status.clone(), c.content));
+            }
+        }
+
+        if entries.is_empty() {
+            return String::new();
+        }
+
+        // Truncate older siblings first to stay under ~2000 chars total
+        const MAX_TOTAL: usize = 2000;
+        let total_len: usize = entries.iter().map(|(_, _, c)| c.len()).sum();
+        if total_len > MAX_TOTAL {
+            let mut remaining = MAX_TOTAL;
+            // Work backwards (older siblings first) to truncate
+            for entry in entries.iter_mut().rev() {
+                if remaining == 0 {
+                    entry.2 = String::from("[truncated]");
+                } else if entry.2.len() > remaining {
+                    entry.2.truncate(remaining);
+                    entry.2.push_str("...[truncated]");
+                    remaining = 0;
+                } else {
+                    remaining -= entry.2.len();
+                }
+            }
+        }
+
+        let mut section = String::from("\n## Implementation Notes from Completed Sub-tasks\n");
+        for (title, status, content) in &entries {
+            let marker = match status.as_str() {
+                "done" => "done",
+                "in_review" => "in review",
+                _ => "completed",
+            };
+            section.push_str(&format!("### Sub-task: \"{}\" ({})\n{}\n\n", title, marker, content));
+        }
+        section
     }
 
     /// Try to reuse a parent task's workspace for a sub-issue by sending a follow-up prompt.
@@ -1039,6 +1133,13 @@ impl LocalContainerService {
         }
 
         prompt.push_str(&siblings_section);
+
+        // Include agent comments from completed siblings as context
+        let sibling_comments_section = self
+            .build_sibling_comments_section(parent_task_id, sub_task_id)
+            .await;
+        prompt.push_str(&sibling_comments_section);
+
         prompt.push_str(&diff_stat_section);
 
         prompt.push_str(&format!(
