@@ -52,7 +52,6 @@ interface KanbanFiltersDialogProps {
   tags: Tag[];
   users: OrganizationMemberWithProfile[];
   filters: KanbanFilterState;
-  showSubIssues: boolean;
   showWorkspaces: boolean;
   onPrioritiesChange: (priorities: IssuePriority[]) => void;
   onAssigneesChange: (assigneeIds: string[]) => void;
@@ -61,7 +60,6 @@ interface KanbanFiltersDialogProps {
     sortField: KanbanSortField,
     sortDirection: 'asc' | 'desc'
   ) => void;
-  onShowSubIssuesChange: (show: boolean) => void;
   onShowWorkspacesChange: (show: boolean) => void;
 }
 
@@ -73,13 +71,11 @@ export function KanbanFiltersDialog({
   tags,
   users,
   filters,
-  showSubIssues,
   showWorkspaces,
   onPrioritiesChange,
   onAssigneesChange,
   onTagsChange,
   onSortChange,
-  onShowSubIssuesChange,
   onShowWorkspacesChange,
 }: KanbanFiltersDialogProps) {
   const { t } = useTranslation('common');
@@ -275,16 +271,6 @@ export function KanbanFiltersDialog({
                 <SortDescendingIcon className="size-icon-base" />
               )}
             </button>
-
-            <div className="flex items-center gap-half rounded-sm bg-panel px-base py-half">
-              <span className="whitespace-nowrap text-sm text-normal">
-                {t('kanban.subIssuesFilterLabel', 'Sub-issues')}
-              </span>
-              <Switch
-                checked={showSubIssues}
-                onCheckedChange={onShowSubIssuesChange}
-              />
-            </div>
 
             <div className="flex items-center gap-half rounded-sm bg-panel px-base py-half">
               <span className="whitespace-nowrap text-sm text-normal">

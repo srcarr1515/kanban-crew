@@ -59,13 +59,11 @@ export interface RenderKanbanFiltersDialogProps<
   projectId: string;
   currentUserId: string | null;
   filters: KanbanFilterState<TSortField>;
-  showSubIssues: boolean;
   showWorkspaces: boolean;
   onPrioritiesChange: (priorities: PriorityLevel[]) => void;
   onAssigneesChange: (assigneeIds: string[]) => void;
   onTagsChange: (tagIds: string[]) => void;
   onSortChange: (sortField: TSortField, sortDirection: 'asc' | 'desc') => void;
-  onShowSubIssuesChange: (show: boolean) => void;
   onShowWorkspacesChange: (show: boolean) => void;
 }
 
@@ -271,22 +269,33 @@ export function KanbanFilterBar<
             )}
           </div>
 
-          {onAutoPickupChange != null && (
-            <label
-              className={cn(
-                'ml-auto flex shrink-0 cursor-pointer items-center gap-half',
-                isMobile && 'hidden'
-              )}
-            >
+          <div
+            className={cn(
+              'ml-auto flex shrink-0 items-center gap-base',
+              isMobile && 'hidden'
+            )}
+          >
+            <label className="flex cursor-pointer items-center gap-half">
               <span className="whitespace-nowrap text-sm text-low">
-                {t('kanban.autoPickup', 'Auto-pickup')}
+                {t('kanban.subIssuesFilterLabel', 'Sub-issues')}
               </span>
               <Switch
-                checked={autoPickupEnabled ?? false}
-                onCheckedChange={onAutoPickupChange}
+                checked={showSubIssues}
+                onCheckedChange={onShowSubIssuesChange}
               />
             </label>
-          )}
+            {onAutoPickupChange != null && (
+              <label className="flex cursor-pointer items-center gap-half">
+                <span className="whitespace-nowrap text-sm text-low">
+                  {t('kanban.autoPickup', 'Auto-pickup')}
+                </span>
+                <Switch
+                  checked={autoPickupEnabled ?? false}
+                  onCheckedChange={onAutoPickupChange}
+                />
+              </label>
+            )}
+          </div>
         </div>
       )}
 
@@ -298,13 +307,11 @@ export function KanbanFilterBar<
         tags,
         users,
         filters,
-        showSubIssues,
         showWorkspaces,
         onPrioritiesChange,
         onAssigneesChange,
         onTagsChange,
         onSortChange,
-        onShowSubIssuesChange,
         onShowWorkspacesChange,
       })}
     </>
