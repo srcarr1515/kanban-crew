@@ -240,41 +240,6 @@ impl LocalContainerService {
         map.remove(id)
     }
 
-    pub async fn cleanup_workspace(&self, workspace: &Workspace) {
-        let Some(container_ref) = &workspace.container_ref else {
-            return;
-        };
-        let workspace_dir = PathBuf::from(container_ref);
-
-        let repositories = WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id)
-            .await
-            .unwrap_or_default();
-
-        if repositories.is_empty() {
-            tracing::warn!(
-                "No repositories found for workspace {}, cleaning up workspace directory only",
-                workspace.id
-            );
-            if workspace_dir.exists()
-                && let Err(e) = tokio::fs::remove_dir_all(&workspace_dir).await
-            {
-                tracing::warn!("Failed to remove workspace directory: {}", e);
-            }
-        } else {
-            WorkspaceManager::cleanup_workspace(&workspace_dir, &repositories)
-                .await
-                .unwrap_or_else(|e| {
-                    tracing::warn!(
-                        "Failed to clean up workspace for workspace {}: {}",
-                        workspace.id,
-                        e
-                    );
-                });
-        }
-
-        let _ = Workspace::mark_worktree_deleted(&self.db.pool, workspace.id).await;
-    }
-
     pub async fn cleanup_expired_workspaces(&self) -> Result<(), DeploymentError> {
         if std::env::var("DISABLE_WORKTREE_CLEANUP").is_ok() {
             tracing::info!(
@@ -1969,6 +1934,41 @@ impl ContainerService for LocalContainerService {
         self.try_stop(workspace, true).await;
         self.cleanup_workspace(workspace).await;
         Ok(())
+    }
+
+    async fn cleanup_workspace(&self, workspace: &Workspace) {
+        let Some(container_ref) = &workspace.container_ref else {
+            return;
+        };
+        let workspace_dir = PathBuf::from(container_ref);
+
+        let repositories = WorkspaceRepo::find_repos_for_workspace(&self.db.pool, workspace.id)
+            .await
+            .unwrap_or_default();
+
+        if repositories.is_empty() {
+            tracing::warn!(
+                "No repositories found for workspace {}, cleaning up workspace directory only",
+                workspace.id
+            );
+            if workspace_dir.exists()
+                && let Err(e) = tokio::fs::remove_dir_all(&workspace_dir).await
+            {
+                tracing::warn!("Failed to remove workspace directory: {}", e);
+            }
+        } else {
+            WorkspaceManager::cleanup_workspace(&workspace_dir, &repositories)
+                .await
+                .unwrap_or_else(|e| {
+                    tracing::warn!(
+                        "Failed to clean up workspace for workspace {}: {}",
+                        workspace.id,
+                        e
+                    );
+                });
+        }
+
+        let _ = Workspace::mark_worktree_deleted(&self.db.pool, workspace.id).await;
     }
 
     async fn ensure_container_exists(

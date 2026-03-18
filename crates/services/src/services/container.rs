@@ -747,6 +747,10 @@ pub trait ContainerService {
         Ok(())
     }
 
+    /// Clean up a workspace's worktree directory on disk and mark it deleted in the DB.
+    /// Default implementation is a no-op; local deployments override this to remove files.
+    async fn cleanup_workspace(&self, _workspace: &Workspace) {}
+
     fn setup_actions_for_repos(&self, repos: &[Repo]) -> Option<ExecutorAction> {
         let repos_with_setup: Vec<_> = repos.iter().filter(|r| r.setup_script.is_some()).collect();
 

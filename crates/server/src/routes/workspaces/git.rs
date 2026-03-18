@@ -394,6 +394,12 @@ pub async fn merge_workspace(
         tracing::error!("Failed to archive workspace {}: {}", workspace.id, e);
     }
 
+    // Clean up the worktree directory immediately instead of waiting for periodic cleanup
+    deployment
+        .container()
+        .cleanup_workspace(&workspace)
+        .await;
+
     deployment
         .track_if_analytics_allowed(
             "task_attempt_merged",
