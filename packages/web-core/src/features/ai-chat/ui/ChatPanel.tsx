@@ -150,9 +150,11 @@ export function ChatPanel() {
     // No threads — create one automatically
     if (autoCreatingRef.current) return;
     autoCreatingRef.current = true;
-    createChatThread({ project_id: projectId }).then((thread) => {
-      queryClient.invalidateQueries({ queryKey: ['chat-threads', projectId] });
+    createChatThread({ project_id: projectId }).then(async (thread) => {
       setActiveThread(thread.id);
+      // Await the invalidation so `threads` updates before we reset the guard,
+      // preventing a second auto-create from a stale empty threads list.
+      await queryClient.invalidateQueries({ queryKey: ['chat-threads', projectId] });
       autoCreatingRef.current = false;
     }).catch(() => {
       autoCreatingRef.current = false;
@@ -163,11 +165,25 @@ export function ChatPanel() {
   const handleDeleteThread = useCallback(
     async (e: React.MouseEvent, threadId: string) => {
       e.stopPropagation();
+      const remaining = threads.filter((t) => t.id !== threadId);
       await deleteChatThread(threadId);
-      await queryClient.invalidateQueries({ queryKey: ['chat-threads', projectId] });
-      if (activeThreadId === threadId) {
-        const remaining = threads.filter((t) => t.id !== threadId);
-        setActiveThread(remaining.length > 0 ? remaining[0].id : null);
+
+      if (remaining.length === 0) {
+        // Last thread deleted — create a replacement directly and guard
+        // against the auto-create effect also firing.
+        autoCreatingRef.current = true;
+        try {
+          const newThread = await createChatThread({ project_id: projectId });
+          await queryClient.invalidateQueries({ queryKey: ['chat-threads', projectId] });
+          setActiveThread(newThread.id);
+        } finally {
+          autoCreatingRef.current = false;
+        }
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ['chat-threads', projectId] });
+        if (activeThreadId === threadId) {
+          setActiveThread(remaining[0].id);
+        }
       }
     },
     [activeThreadId, threads, projectId, queryClient, setActiveThread]
