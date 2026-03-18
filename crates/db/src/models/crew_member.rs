@@ -14,6 +14,7 @@ pub struct CrewMember {
     pub personality: String,
     pub ai_provider: Option<String>,
     pub ai_model: Option<String>,
+    pub skills: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

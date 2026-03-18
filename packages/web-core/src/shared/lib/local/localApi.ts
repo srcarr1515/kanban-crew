@@ -157,6 +157,7 @@ export interface CrewMember {
   personality: string;
   ai_provider: string | null;
   ai_model: string | null;
+  skills: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -190,6 +191,7 @@ export function updateCrewMember(
     personality?: string;
     ai_provider?: string;
     ai_model?: string;
+    skills?: string[] | null;
   }
 ): Promise<CrewMember> {
   return localFetch<CrewMember>(`/api/local/crew-members/${id}`, {

@@ -9,6 +9,7 @@ import { AgentsSettingsSectionContent } from './AgentsSettingsSection';
 import { AiProvidersSettingsSectionContent } from './AiProvidersSettingsSection';
 import { McpSettingsSectionContent } from './McpSettingsSection';
 import { RelaySettingsSectionContent } from './RelaySettingsSection';
+import { SkillsSettingsSectionContent } from './SkillsSettingsSection';
 
 export type SettingsSectionType =
   | 'general'
@@ -18,7 +19,8 @@ export type SettingsSectionType =
   | 'agents'
   | 'ai-providers'
   | 'mcp'
-  | 'relay';
+  | 'relay'
+  | 'skills';
 
 // Section-specific initial state types
 export type SettingsSectionInitialState = {
@@ -32,6 +34,7 @@ export type SettingsSectionInitialState = {
   'ai-providers': undefined;
   mcp: undefined;
   relay: { hostId?: string } | undefined;
+  skills: undefined;
 };
 
 interface SettingsSectionProps {
@@ -79,6 +82,8 @@ export function SettingsSection({
             initialState={initialState as SettingsSectionInitialState['relay']}
           />
         );
+      case 'skills':
+        return <SkillsSettingsSectionContent />;
       default:
         return <GeneralSettingsSectionContent />;
     }

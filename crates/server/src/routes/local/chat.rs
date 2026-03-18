@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use axum::{
-    Router,
+    Extension, Router,
     body::Body,
     extract::{Json, Path, Query, State},
     response::{Json as ResponseJson, Response},
@@ -15,7 +17,7 @@ use tokio::io::AsyncBufReadExt;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
-use crate::{DeploymentImpl, error::ApiError};
+use crate::{DeploymentImpl, error::ApiError, skill_registry::SkillRegistry};
 
 // ── DB types ────────────────────────────────────────────────────────────────
 
@@ -248,6 +250,7 @@ When filtering by a known UUID string like 'abc-123-...', use the tasks/projects
 
 async fn chat_completion(
     State(deployment): State<DeploymentImpl>,
+    Extension(skill_registry): Extension<Arc<SkillRegistry>>,
     Json(request): Json<SendMessageRequest>,
 ) -> Result<Response<Body>, ApiError> {
     let pool = &deployment.db().pool;
@@ -293,17 +296,71 @@ async fn chat_completion(
         personality: String,
         ai_provider: Option<String>,
         ai_model: Option<String>,
+        skills: Option<String>,
     }
 
     let crew_row = if let Some(crew_id) = request.crew_member_id {
         sqlx::query_as::<_, CrewMemberRow>(
-            "SELECT name, role_prompt, personality, ai_provider, ai_model FROM crew_members WHERE id = ?",
+            "SELECT name, role_prompt, personality, ai_provider, ai_model, skills FROM crew_members WHERE id = ?",
         )
         .bind(crew_id)
         .fetch_optional(pool)
         .await?
     } else {
         None
+    };
+
+    // Resolve active skills for this crew member
+    let skills_section = {
+        // Determine which skill names are active
+        let active_skill_names: Vec<String> = if let Some(ref cm) = crew_row {
+            if let Some(ref skills_json) = cm.skills {
+                // Crew member has explicit skill list — parse JSON array
+                serde_json::from_str::<Vec<String>>(skills_json).unwrap_or_default()
+            } else {
+                // Null means use all defaults
+                skill_registry.disk_skills().map(|s| s.name.clone()).collect()
+            }
+        } else {
+            // No crew member — use all defaults
+            skill_registry.disk_skills().map(|s| s.name.clone()).collect()
+        };
+
+        if active_skill_names.is_empty() {
+            String::new()
+        } else {
+            // Load DB skills (user overrides) — fetch all and index by name
+            let db_skills = db::models::skill::Skill::list(pool).await.unwrap_or_default();
+            let db_skill_map: std::collections::HashMap<&str, &db::models::skill::Skill> =
+                db_skills.iter().map(|s| (s.name.as_str(), s)).collect();
+
+            let mut parts = Vec::new();
+            for name in &active_skill_names {
+                // DB skills override disk defaults when names collide
+                if let Some(db_skill) = db_skill_map.get(name.as_str()) {
+                    parts.push(db_skill.content.clone());
+                } else if let Some(disk_skill) = skill_registry.get_by_name(name) {
+                    parts.push(disk_skill.content.clone());
+                }
+            }
+
+            if parts.is_empty() {
+                String::new()
+            } else {
+                let mut section = String::from(
+                    "\n\n# Active Skills\n\
+                     The following skills are loaded and you MUST follow their instructions:\n\n",
+                );
+                for (i, content) in parts.iter().enumerate() {
+                    if i > 0 {
+                        section.push_str("\n---\n\n");
+                    }
+                    section.push_str(content);
+                    section.push('\n');
+                }
+                section
+            }
+        }
     };
 
     let mut system_prompt = if let Some(ref cm) = crew_row {
@@ -316,23 +373,29 @@ async fn chat_completion(
              {}\n\n\
              Stay in character at all times. Respond as {} would — \
              use the communication style described above and bring the expertise of your role \
-             to every answer.\n\n\
-             # Task Instructions\n",
+             to every answer.\n",
             cm.name, cm.role_prompt, cm.personality, cm.name
         );
+        prompt.push_str(&skills_section);
+        prompt.push_str("\n# Task Instructions\n");
         prompt.push_str(SYSTEM_PROMPT);
         prompt
     } else {
-        SYSTEM_PROMPT.to_string()
+        let mut prompt = String::new();
+        if !skills_section.is_empty() {
+            prompt.push_str(&skills_section);
+            prompt.push('\n');
+        }
+        prompt.push_str(SYSTEM_PROMPT);
+        prompt
     };
 
     // Inject current task list so the AI can reference task IDs for modifications/deletions
-    let thread_project_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT project_id FROM chat_threads WHERE id = ?",
-    )
-    .bind(&request.thread_id)
-    .fetch_optional(pool)
-    .await?;
+    let thread_project_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT project_id FROM chat_threads WHERE id = ?")
+            .bind(&request.thread_id)
+            .fetch_optional(pool)
+            .await?;
 
     if let Some(proj_id) = thread_project_id {
         let tasks: Vec<(String, String, Option<String>, String, Option<String>)> = sqlx::query_as(
@@ -894,11 +957,7 @@ async fn execute_readonly_query(
     let sql = request.sql.trim().to_string();
 
     // Validate the query is read-only by checking the first keyword
-    let first_word = sql
-        .split_whitespace()
-        .next()
-        .unwrap_or("")
-        .to_uppercase();
+    let first_word = sql.split_whitespace().next().unwrap_or("").to_uppercase();
 
     if first_word != "SELECT" && first_word != "WITH" && first_word != "EXPLAIN" {
         return Err(ApiError::BadRequest(
@@ -951,31 +1010,30 @@ async fn execute_readonly_query(
     for row in &rows {
         let mut values: Vec<serde_json::Value> = Vec::with_capacity(columns.len());
         for (i, _col) in columns.iter().enumerate() {
-            let val: serde_json::Value =
-                if let Ok(v) = row.try_get::<Option<String>, _>(i) {
-                    v.map(serde_json::Value::String)
-                        .unwrap_or(serde_json::Value::Null)
-                } else if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
-                    v.map(|n| serde_json::Value::Number(n.into()))
-                        .unwrap_or(serde_json::Value::Null)
-                } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
-                    v.and_then(|n| serde_json::Number::from_f64(n).map(serde_json::Value::Number))
-                        .unwrap_or(serde_json::Value::Null)
-                } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
-                    v.map(serde_json::Value::Bool)
-                        .unwrap_or(serde_json::Value::Null)
-                } else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
-                    v.map(|b| {
-                        serde_json::Value::String(
-                            b.iter()
-                                .map(|byte| format!("{byte:02x}"))
-                                .collect::<String>(),
-                        )
-                    })
+            let val: serde_json::Value = if let Ok(v) = row.try_get::<Option<String>, _>(i) {
+                v.map(serde_json::Value::String)
                     .unwrap_or(serde_json::Value::Null)
-                } else {
-                    serde_json::Value::Null
-                };
+            } else if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
+                v.map(|n| serde_json::Value::Number(n.into()))
+                    .unwrap_or(serde_json::Value::Null)
+            } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
+                v.and_then(|n| serde_json::Number::from_f64(n).map(serde_json::Value::Number))
+                    .unwrap_or(serde_json::Value::Null)
+            } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
+                v.map(serde_json::Value::Bool)
+                    .unwrap_or(serde_json::Value::Null)
+            } else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
+                v.map(|b| {
+                    serde_json::Value::String(
+                        b.iter()
+                            .map(|byte| format!("{byte:02x}"))
+                            .collect::<String>(),
+                    )
+                })
+                .unwrap_or(serde_json::Value::Null)
+            } else {
+                serde_json::Value::Null
+            };
             values.push(val);
         }
         result_rows.push(values);

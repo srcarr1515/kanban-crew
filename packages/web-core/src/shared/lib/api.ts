@@ -1537,6 +1537,60 @@ export const releasesApi = {
   },
 };
 
+// Skills API
+export interface SkillEntry {
+  id: string | null;
+  name: string;
+  description: string;
+  trigger_description: string;
+  content: string;
+  source: 'disk' | 'database';
+}
+
+export interface CreateSkillRequest {
+  name: string;
+  description?: string;
+  trigger_description?: string;
+  content?: string;
+}
+
+export interface UpdateSkillRequest {
+  name?: string;
+  description?: string;
+  trigger_description?: string;
+  content?: string;
+}
+
+export const skillsApi = {
+  list: async (): Promise<SkillEntry[]> => {
+    const response = await makeRequest('/api/local/skills');
+    return handleApiResponse<SkillEntry[]>(response);
+  },
+
+  create: async (data: CreateSkillRequest): Promise<SkillEntry> => {
+    const response = await makeRequest('/api/local/skills', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<SkillEntry>(response);
+  },
+
+  update: async (id: string, data: UpdateSkillRequest): Promise<SkillEntry> => {
+    const response = await makeRequest(`/api/local/skills/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<SkillEntry>(response);
+  },
+
+  delete: async (id: string): Promise<void> => {
+    const response = await makeRequest(`/api/local/skills/${id}`, {
+      method: 'DELETE',
+    });
+    return handleApiResponse<void>(response);
+  },
+};
+
 // Search API (multi-repo file search)
 export const searchApi = {
   searchFiles: async (

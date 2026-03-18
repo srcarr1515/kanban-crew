@@ -30,7 +30,58 @@
         "ai-providers": "AI Providers",
         "ai-providersDesc": "Configure AI provider API keys and defaults",
         "relay": "Remote Access",
-        "relayDesc": "Relay tunnel and enrollment"
+        "relayDesc": "Relay tunnel and enrollment",
+        "skills": "Skills",
+        "skillsDesc": "Manage AI skill instructions"
+      }
+    },
+    "skills": {
+      "title": "Skills",
+      "description": "Skills are markdown instruction files injected into the AI system prompt to shape agent behavior.",
+      "list": {
+        "title": "Available Skills",
+        "empty": "No skills found.",
+        "sourceDisk": "Built-in",
+        "sourceDatabase": "Custom",
+        "searchPlaceholder": "Filter skills..."
+      },
+      "preview": {
+        "title": "Preview",
+        "triggerLabel": "Trigger",
+        "emptyContent": "No content."
+      },
+      "form": {
+        "createTitle": "Create Skill",
+        "editTitle": "Edit Skill",
+        "name": "Name",
+        "namePlaceholder": "e.g., code-review",
+        "description": "Description",
+        "descriptionPlaceholder": "Short description of what this skill does",
+        "triggerDescription": "Trigger Description",
+        "triggerDescriptionPlaceholder": "When should this skill be activated?",
+        "content": "Content (Markdown)",
+        "contentPlaceholder": "Write skill instructions in markdown...",
+        "importFile": "Import .md file",
+        "dropZone": "Drop a .md file here or click to import",
+        "save": "Save Skill",
+        "cancel": "Cancel"
+      },
+      "delete": {
+        "title": "Delete Skill",
+        "message": "Are you sure you want to delete the skill \"{{name}}\"? This cannot be undone.",
+        "confirm": "Delete",
+        "cancel": "Cancel"
+      },
+      "errors": {
+        "loadFailed": "Failed to load skills.",
+        "saveFailed": "Failed to save skill.",
+        "deleteFailed": "Failed to delete skill.",
+        "nameRequired": "Skill name is required."
+      },
+      "success": {
+        "created": "Skill created successfully.",
+        "updated": "Skill updated successfully.",
+        "deleted": "Skill deleted successfully."
       }
     },
     "general": {

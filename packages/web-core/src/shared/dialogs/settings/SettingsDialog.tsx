@@ -12,6 +12,7 @@ import {
   CaretLeftIcon,
   XIcon,
   BrainIcon,
+  LightningIcon,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { create, useModal } from '@ebay/nice-modal-react';
@@ -40,6 +41,7 @@ const SETTINGS_SECTIONS: {
   { id: 'agents', icon: CpuIcon },
   { id: 'ai-providers', icon: BrainIcon },
   { id: 'mcp', icon: PlugIcon },
+  { id: 'skills', icon: LightningIcon },
   { id: 'relay', icon: BroadcastIcon },
 ];
 

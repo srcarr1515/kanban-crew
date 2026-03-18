@@ -24,6 +24,8 @@ pub struct CreateCrewMemberRequest {
     pub personality: Option<String>,
     pub ai_provider: Option<String>,
     pub ai_model: Option<String>,
+    /// Skill configuration. `null`/absent = all defaults, `[]` = none, `["x"]` = only those.
+    pub skills: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -38,6 +40,9 @@ pub struct UpdateCrewMemberRequest {
     pub ai_provider: Option<String>,
     /// AI model override. Send `""` to clear back to global default.
     pub ai_model: Option<String>,
+    /// Skill configuration. Absent = keep existing, `null` = reset to all defaults,
+    /// `[]` = no skills, `["x"]` = only those.
+    pub skills: Option<serde_json::Value>,
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
@@ -58,7 +63,7 @@ async fn list_crew_members(
     let pool = &deployment.db().pool;
 
     let members = sqlx::query_as::<_, CrewMember>(
-        "SELECT id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, created_at, updated_at
+        "SELECT id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, created_at, updated_at
          FROM crew_members
          ORDER BY created_at ASC",
     )
@@ -91,11 +96,16 @@ async fn create_crew_member(
     let personality = request.personality.unwrap_or_default();
     let ai_provider = request.ai_provider.filter(|s| !s.is_empty());
     let ai_model = request.ai_model.filter(|s| !s.is_empty());
+    // null or absent → DB NULL (all defaults); array → store as JSON string
+    let skills = request
+        .skills
+        .filter(|v| !v.is_null())
+        .map(|v| v.to_string());
 
     let member = sqlx::query_as::<_, CrewMember>(
-        r#"INSERT INTO crew_members (id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, created_at, updated_at"#,
+        r#"INSERT INTO crew_members (id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, created_at, updated_at"#,
     )
     .bind(id)
     .bind(&request.name)
@@ -106,6 +116,7 @@ async fn create_crew_member(
     .bind(&personality)
     .bind(&ai_provider)
     .bind(&ai_model)
+    .bind(&skills)
     .fetch_one(pool)
     .await?;
 
@@ -132,9 +143,12 @@ async fn update_crew_member(
         .as_ref()
         .map(|s| if s.is_empty() { None } else { Some(s.as_str()) });
 
-    // Use CASE expressions for ai_provider/ai_model so we can explicitly set NULL
-    // ?8 = 1 when the field was sent (should be updated), 0 when absent (keep existing)
-    // ?9 = the new value (NULL to clear, or the override string)
+    // For skills: absent (None) → keep, Some(null) → clear to DB NULL, Some(array) → set
+    let skills_update: Option<Option<String>> = request
+        .skills
+        .map(|v| if v.is_null() { None } else { Some(v.to_string()) });
+
+    // Use CASE expressions for nullable fields so we can explicitly set NULL
     let member = sqlx::query_as::<_, CrewMember>(
         r#"UPDATE crew_members
            SET name        = COALESCE(?, name),
@@ -145,9 +159,10 @@ async fn update_crew_member(
                personality = COALESCE(?, personality),
                ai_provider = CASE WHEN ? THEN ? ELSE ai_provider END,
                ai_model    = CASE WHEN ? THEN ? ELSE ai_model END,
+               skills      = CASE WHEN ? THEN ? ELSE skills END,
                updated_at  = datetime('now', 'subsec')
            WHERE id = ?
-           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, created_at, updated_at"#,
+           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, created_at, updated_at"#,
     )
     .bind(&request.name)
     .bind(&request.role)
@@ -159,6 +174,8 @@ async fn update_crew_member(
     .bind(ai_provider_update.and_then(|v| v))
     .bind(ai_model_update.is_some())
     .bind(ai_model_update.and_then(|v| v))
+    .bind(skills_update.is_some())
+    .bind(skills_update.and_then(|v| v))
     .bind(id)
     .fetch_optional(pool)
     .await?

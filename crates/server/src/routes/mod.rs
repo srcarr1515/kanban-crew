@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use axum::{
-    Router,
+    Extension, Router,
     routing::{IntoMakeService, get},
 };
 use tower_http::validate_request::ValidateRequestHeaderLayer;
 
-use crate::{DeploymentImpl, middleware};
+use crate::{DeploymentImpl, middleware, skill_registry::SkillRegistry};
 
 pub mod approvals;
 pub mod config;
@@ -33,6 +35,8 @@ pub mod terminal;
 pub mod workspaces;
 
 pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
+    let skill_registry = Arc::new(SkillRegistry::load());
+
     let relay_signed_routes = Router::new()
         .route("/health", get(health::health_check))
         .merge(config::router())
@@ -55,6 +59,7 @@ pub fn router(deployment: DeploymentImpl) -> IntoMakeService<Router> {
         .merge(terminal::router())
         .nest("/remote", remote::router())
         .nest("/images", images::routes())
+        .layer(Extension(skill_registry))
         .layer(axum::middleware::from_fn_with_state(
             deployment.clone(),
             middleware::sign_relay_response,

@@ -26,7 +26,7 @@ import {
 } from '@/shared/lib/local/localApi';
 import { cn } from '@/shared/lib/utils';
 import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
-import { mcpServersApi } from '@/shared/lib/api';
+import { mcpServersApi, skillsApi, type SkillEntry } from '@/shared/lib/api';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { BaseCodingAgent } from 'shared/types';
 import type { AiProviderEntry } from 'shared/types';
@@ -52,6 +52,7 @@ type CrewMemberChanges = {
   avatar?: string;
   ai_provider?: string;
   ai_model?: string;
+  skills?: string[] | null;
 };
 
 const selectClasses = cn(
@@ -60,18 +61,22 @@ const selectClasses = cn(
   'focus:outline-none focus:ring-1 focus:ring-brand'
 );
 
+type SkillMode = 'all' | 'custom' | 'none';
+
 function CrewMemberEditForm({
   member,
   onSave,
   isSaving,
   mcpServerNames,
   aiProviders,
+  availableSkills,
 }: {
   member: CrewMember;
   onSave: (id: string, changes: CrewMemberChanges) => void;
   isSaving: boolean;
   mcpServerNames: string[];
   aiProviders: AiProviderEntry[];
+  availableSkills: SkillEntry[];
 }) {
   const [name, setName] = useState(member.name);
   const [role, setRole] = useState(member.role);
@@ -88,6 +93,28 @@ function CrewMemberEditForm({
     }
   });
 
+  // Skills state: null = all defaults, string[] = custom selection (empty = none)
+  const [skillMode, setSkillMode] = useState<SkillMode>(() => {
+    if (member.skills === null || member.skills === undefined) return 'all';
+    try {
+      const parsed = JSON.parse(member.skills);
+      if (Array.isArray(parsed) && parsed.length === 0) return 'none';
+      if (Array.isArray(parsed)) return 'custom';
+    } catch {
+      // fall through
+    }
+    return 'all';
+  });
+  const [selectedSkills, setSelectedSkills] = useState<string[]>(() => {
+    if (member.skills === null || member.skills === undefined) return [];
+    try {
+      const parsed = JSON.parse(member.skills);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  });
+
   const enabledProviders = aiProviders.filter((p) => p.enabled);
 
   const handleToolToggle = (serverName: string) => {
@@ -98,8 +125,24 @@ function CrewMemberEditForm({
     );
   };
 
+  const handleSkillToggle = (skillName: string) => {
+    setSelectedSkills((prev) =>
+      prev.includes(skillName)
+        ? prev.filter((s) => s !== skillName)
+        : [...prev, skillName]
+    );
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
+    let skills: string[] | null;
+    if (skillMode === 'all') {
+      skills = null;
+    } else if (skillMode === 'none') {
+      skills = [];
+    } else {
+      skills = selectedSkills;
+    }
     onSave(member.id, {
       name: name.trim() || member.name,
       role: role.trim() || member.role,
@@ -108,6 +151,7 @@ function CrewMemberEditForm({
       personality,
       ai_provider: aiProvider,
       ai_model: aiModel,
+      skills,
     });
   };
 
@@ -275,6 +319,77 @@ function CrewMemberEditForm({
         )}
       </div>
 
+      {/* Skills */}
+      <div>
+        <label className="block text-xs font-medium text-low mb-1">
+          Skills
+        </label>
+        <div className="flex gap-1.5 mb-2">
+          {(['all', 'custom', 'none'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              onClick={() => setSkillMode(mode)}
+              className={cn(
+                'px-2 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer',
+                'border',
+                skillMode === mode
+                  ? 'bg-brand/15 text-brand border-brand/30'
+                  : 'bg-primary text-low border-border hover:border-brand/30 hover:text-normal'
+              )}
+            >
+              {mode === 'all'
+                ? 'All (default)'
+                : mode === 'custom'
+                  ? 'Custom'
+                  : 'None'}
+            </button>
+          ))}
+        </div>
+        {skillMode === 'all' && (
+          <p className="text-[11px] text-muted">
+            All available skills will be active for this crew member.
+          </p>
+        )}
+        {skillMode === 'none' && (
+          <p className="text-[11px] text-muted">
+            No skills will be active for this crew member.
+          </p>
+        )}
+        {skillMode === 'custom' && (
+          <>
+            {availableSkills.length === 0 ? (
+              <p className="text-xs text-muted">
+                No skills available. Create skills in Settings &gt; Skills.
+              </p>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {availableSkills.map((skill) => {
+                  const isSelected = selectedSkills.includes(skill.name);
+                  return (
+                    <button
+                      key={skill.name}
+                      type="button"
+                      onClick={() => handleSkillToggle(skill.name)}
+                      className={cn(
+                        'px-2 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer',
+                        'border',
+                        isSelected
+                          ? 'bg-brand/15 text-brand border-brand/30'
+                          : 'bg-primary text-low border-border hover:border-brand/30 hover:text-normal'
+                      )}
+                      title={skill.description}
+                    >
+                      {skill.name}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
       {/* Save button */}
       <div className="flex justify-end pt-1">
         <button
@@ -423,6 +538,7 @@ function CrewMemberCard({
   isSaving,
   mcpServerNames,
   aiProviders,
+  availableSkills,
 }: {
   member: CrewMember;
   isExpanded: boolean;
@@ -433,6 +549,7 @@ function CrewMemberCard({
   isSaving: boolean;
   mcpServerNames: string[];
   aiProviders: AiProviderEntry[];
+  availableSkills: SkillEntry[];
 }) {
   const [showAvatarModal, setShowAvatarModal] = useState(false);
 
@@ -559,6 +676,7 @@ function CrewMemberCard({
             isSaving={isSaving}
             mcpServerNames={mcpServerNames}
             aiProviders={aiProviders}
+            availableSkills={availableSkills}
           />
         </div>
       )}
@@ -578,6 +696,13 @@ function MembersSection() {
     queryKey: CREW_MEMBERS_KEY,
     queryFn: listCrewMembers,
     staleTime: 30_000, // Reuse cached data for 30s to avoid spinner flash on reopen
+  });
+
+  // Load available skills for skill toggles
+  const { data: availableSkills = [] } = useQuery({
+    queryKey: ['skills'],
+    queryFn: skillsApi.list,
+    staleTime: 60_000,
   });
 
   // Load MCP server names for tool access multi-select
@@ -701,6 +826,7 @@ function MembersSection() {
               isSaving={updateMutation.isPending}
               mcpServerNames={mcpServerNames}
               aiProviders={aiProviders}
+              availableSkills={availableSkills}
             />
           ))}
         </div>
