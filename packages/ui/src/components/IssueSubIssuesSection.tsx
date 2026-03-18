@@ -5,6 +5,7 @@ import {
   type SectionAction,
 } from './CollapsibleSectionHeader';
 import { SubIssueRow } from './SubIssueRow';
+import type { StatusOption } from './StatusContextMenu';
 import type { PriorityLevel } from './PriorityIcon';
 import type { KanbanAssigneeUser } from './KanbanAssignee';
 
@@ -28,6 +29,8 @@ export interface IssueSubIssuesSectionProps {
   onSubIssueDelete?: (subIssueId: string) => void;
   onSubIssuePriorityClick?: (subIssueId: string) => void;
   onSubIssueAssigneeClick?: (subIssueId: string) => void;
+  onSubIssueStatusChange?: (subIssueId: string, statusId: string) => void;
+  statuses?: StatusOption[];
   isLoading?: boolean;
   isReordering?: boolean;
   actions?: SectionAction[];
@@ -41,6 +44,8 @@ export function IssueSubIssuesSection({
   onSubIssueDelete,
   onSubIssuePriorityClick,
   onSubIssueAssigneeClick,
+  onSubIssueStatusChange,
+  statuses,
   isLoading,
   isReordering,
   actions,
@@ -88,6 +93,12 @@ export function IssueSubIssuesSection({
                   assignees={subIssue.assignees}
                   createdAt={subIssue.createdAt}
                   onClick={() => onSubIssueClick(subIssue.id)}
+                  onStatusChange={
+                    onSubIssueStatusChange
+                      ? (statusId) => onSubIssueStatusChange(subIssue.id, statusId)
+                      : undefined
+                  }
+                  statuses={statuses}
                   onMarkIndependentClick={
                     onSubIssueMarkIndependent
                       ? (e) => {

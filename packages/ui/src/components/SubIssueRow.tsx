@@ -11,6 +11,10 @@ import {
 import { cn } from '../lib/cn';
 import { PriorityIcon, type PriorityLevel } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
+import {
+  StatusContextMenu,
+  type StatusOption,
+} from './StatusContextMenu';
 import { KanbanAssignee, type KanbanAssigneeUser } from './KanbanAssignee';
 import { useTranslation } from 'react-i18next';
 import {
@@ -56,6 +60,8 @@ export interface SubIssueRowProps {
   onClick?: () => void;
   onPriorityClick?: (e: React.MouseEvent) => void;
   onAssigneeClick?: (e: React.MouseEvent) => void;
+  onStatusChange?: (statusId: string) => void;
+  statuses?: StatusOption[];
   onMarkIndependentClick?: (e: React.MouseEvent) => void;
   onDeleteClick?: (e: React.MouseEvent) => void;
   className?: string;
@@ -74,6 +80,8 @@ export function SubIssueRow({
   onClick,
   onPriorityClick,
   onAssigneeClick,
+  onStatusChange,
+  statuses,
   onMarkIndependentClick,
   onDeleteClick,
   className,
@@ -136,7 +144,30 @@ export function SubIssueRow({
             <span className="font-ibm-plex-mono text-sm text-normal shrink-0">
               {simpleId}
             </span>
-            {statusId ? (
+            {onStatusChange && statuses ? (
+              <StatusContextMenu
+                statuses={statuses}
+                currentStatusId={statusId}
+                onStatusChange={onStatusChange}
+                side="bottom"
+                align="start"
+              >
+                <button
+                  type="button"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center cursor-pointer hover:bg-secondary rounded-sm transition-colors"
+                >
+                  {statusId ? (
+                    <StatusIcon statusId={statusId} size="xs" />
+                  ) : (
+                    <span
+                      className="w-2 h-2 rounded-full shrink-0"
+                      style={{ backgroundColor: `hsl(${statusColor})` }}
+                    />
+                  )}
+                </button>
+              </StatusContextMenu>
+            ) : statusId ? (
               <StatusIcon statusId={statusId} size="xs" />
             ) : (
               <span

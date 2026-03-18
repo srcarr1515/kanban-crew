@@ -2,6 +2,7 @@ import { useMemo, useCallback, useState } from 'react';
 import { useParams } from '@tanstack/react-router';
 import { DragDropContext, type DropResult } from '@hello-pangea/dnd';
 import { PlusIcon, LinkIcon } from '@phosphor-icons/react';
+import { toast } from 'sonner';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useOrgContext } from '@/shared/hooks/useOrgContext';
 import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
@@ -51,6 +52,14 @@ export function IssueSubIssuesSectionContainer({
   // Create lookup maps for efficient access
   const statusesById = useMemo(() => {
     return new Map(statuses.map((s) => [s.id, s]));
+  }, [statuses]);
+
+  // Build status options for the context menu
+  const statusOptions = useMemo(() => {
+    return statuses
+      .filter((s) => !s.hidden)
+      .sort((a, b) => a.sort_order - b.sort_order)
+      .map((s) => ({ id: s.id, name: s.name }));
   }, [statuses]);
 
   // Filter, sort, and transform sub-issues
@@ -181,6 +190,16 @@ export function IssueSubIssuesSectionContainer({
     [projectId, openAssigneeSelection]
   );
 
+  const handleSubIssueStatusChange = useCallback(
+    (subIssueId: string, statusId: string) => {
+      const result = updateIssue(subIssueId, { status_id: statusId });
+      result.persisted.catch(() => {
+        toast.error('Failed to update status');
+      });
+    },
+    [updateIssue]
+  );
+
   const handleSubIssueMarkIndependent = useCallback(
     (subIssueId: string) => {
       updateIssue(subIssueId, {
@@ -236,6 +255,8 @@ export function IssueSubIssuesSectionContainer({
         onSubIssueDelete={handleSubIssueDelete}
         onSubIssuePriorityClick={handleSubIssuePriorityClick}
         onSubIssueAssigneeClick={handleSubIssueAssigneeClick}
+        onSubIssueStatusChange={handleSubIssueStatusChange}
+        statuses={statusOptions}
         isLoading={isLoading}
         isReordering={isReordering}
         actions={actions}
