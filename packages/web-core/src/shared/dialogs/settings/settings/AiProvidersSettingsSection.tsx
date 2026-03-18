@@ -8,7 +8,7 @@ import {
   EyeSlashIcon,
   SpinnerIcon,
 } from '@phosphor-icons/react';
-import type { AiProviderConfig, AiProviderEntry } from 'shared/types';
+import type { AiProviderConfig, AiProviderEntry, VisionModelConfig } from 'shared/types';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
 import { IconButton } from '@vibe/ui/components/IconButton';
@@ -42,6 +42,13 @@ function getDefaultAiProviderConfig(): AiProviderConfig {
   };
 }
 
+function getDefaultVisionModelConfig(): VisionModelConfig {
+  return {
+    provider: null,
+    model: null,
+  };
+}
+
 export function AiProvidersSettingsSection() {
   const { t } = useTranslation(['settings', 'common']);
   const { setDirty: setContextDirty } = useSettingsDirty();
@@ -52,25 +59,33 @@ export function AiProvidersSettingsSection() {
       ? cloneDeep(config.ai_providers)
       : getDefaultAiProviderConfig()
   );
+  const [visionDraft, setVisionDraft] = useState<VisionModelConfig>(() =>
+    config?.vision_model
+      ? cloneDeep(config.vision_model)
+      : getDefaultVisionModelConfig()
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
   const [visibleKeys, setVisibleKeys] = useState<Set<string>>(new Set());
 
   const serverState = config?.ai_providers ?? getDefaultAiProviderConfig();
+  const visionServerState = config?.vision_model ?? getDefaultVisionModelConfig();
 
   useEffect(() => {
     if (!config) return;
     const serverAi = config.ai_providers ?? getDefaultAiProviderConfig();
+    const serverVision = config.vision_model ?? getDefaultVisionModelConfig();
     if (!hasUnsavedChanges) {
       setDraft(cloneDeep(serverAi));
+      setVisionDraft(cloneDeep(serverVision));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [config]);
 
   const hasUnsavedChanges = useMemo(
-    () => !isEqual(draft, serverState),
-    [draft, serverState]
+    () => !isEqual(draft, serverState) || !isEqual(visionDraft, visionServerState),
+    [draft, serverState, visionDraft, visionServerState]
   );
 
   useEffect(() => {
@@ -166,7 +181,7 @@ export function AiProvidersSettingsSection() {
     setError(null);
     setSuccess(false);
     try {
-      await updateAndSaveConfig({ ai_providers: draft });
+      await updateAndSaveConfig({ ai_providers: draft, vision_model: visionDraft });
       setSuccess(true);
       setTimeout(() => setSuccess(false), 3000);
     } catch (err) {
@@ -179,6 +194,7 @@ export function AiProvidersSettingsSection() {
 
   const handleDiscard = () => {
     setDraft(cloneDeep(serverState));
+    setVisionDraft(cloneDeep(visionServerState));
     setVisibleKeys(new Set());
   };
 
@@ -273,6 +289,47 @@ export function AiProvidersSettingsSection() {
                 }))
               }
               placeholder={t('settings.aiProviders.defaults.model.placeholder')}
+            />
+          </SettingsField>
+        )}
+      </SettingsCard>
+
+      {/* Vision Model */}
+      <SettingsCard
+        title={t('settings.aiProviders.visionModel.title')}
+        description={t('settings.aiProviders.visionModel.description')}
+      >
+        <SettingsField
+          label={t('settings.aiProviders.visionModel.provider.label')}
+          description={t('settings.aiProviders.visionModel.provider.helper')}
+        >
+          <SettingsSelect
+            value={visionDraft.provider ?? undefined}
+            options={providerOptions}
+            onChange={(value) =>
+              setVisionDraft((prev) => ({
+                ...prev,
+                provider: value || null,
+              }))
+            }
+            placeholder={t('settings.aiProviders.visionModel.provider.placeholder')}
+          />
+        </SettingsField>
+
+        {visionDraft.provider && (
+          <SettingsField
+            label={t('settings.aiProviders.visionModel.model.label')}
+            description={t('settings.aiProviders.visionModel.model.helper')}
+          >
+            <SettingsInput
+              value={visionDraft.model ?? ''}
+              onChange={(value) =>
+                setVisionDraft((prev) => ({
+                  ...prev,
+                  model: value || null,
+                }))
+              }
+              placeholder={t('settings.aiProviders.visionModel.model.placeholder')}
             />
           </SettingsField>
         )}

@@ -44,6 +44,7 @@ pub type ShowcaseState = versions::v9::ShowcaseState;
 pub type SendMessageShortcut = versions::v9::SendMessageShortcut;
 pub type AiProviderConfig = versions::v9::AiProviderConfig;
 pub type AiProviderEntry = versions::v9::AiProviderEntry;
+pub type VisionModelConfig = versions::v9::VisionModelConfig;
 
 /// Will always return config, trying old schemas or eventually returning default
 pub async fn load_config_from_file(config_path: &PathBuf) -> Config {

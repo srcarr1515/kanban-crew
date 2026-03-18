@@ -43,6 +43,16 @@ const SECTION_LABELS: Record<CrewSectionType, string> = {
 
 const CREW_MEMBERS_KEY = ['local', 'crew-members'];
 
+/** Built-in MCP permission flags stored in tool_access alongside server names. */
+const MCP_PERMISSION_FLAGS = [
+  {
+    key: 'mcp.vision',
+    label: 'Vision',
+    description:
+      'Allow this crew member to use the describe_image MCP tool for interpreting screenshots, mockups, and diagrams.',
+  },
+] as const;
+
 type CrewMemberChanges = {
   name?: string;
   role?: string;
@@ -317,6 +327,38 @@ function CrewMemberEditForm({
             })}
           </div>
         )}
+      </div>
+
+      {/* MCP Permissions */}
+      <div>
+        <label className="block text-xs font-medium text-low mb-1">
+          MCP Permissions
+        </label>
+        <div className="flex flex-wrap gap-1.5">
+          {MCP_PERMISSION_FLAGS.map((flag) => {
+            const isSelected = selectedTools.includes(flag.key);
+            return (
+              <button
+                key={flag.key}
+                type="button"
+                onClick={() => handleToolToggle(flag.key)}
+                className={cn(
+                  'px-2 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer',
+                  'border',
+                  isSelected
+                    ? 'bg-brand/15 text-brand border-brand/30'
+                    : 'bg-primary text-low border-border hover:border-brand/30 hover:text-normal'
+                )}
+                title={flag.description}
+              >
+                {flag.label}
+              </button>
+            );
+          })}
+        </div>
+        <p className="text-[11px] text-muted mt-1">
+          Controls which built-in MCP tools this crew member can use.
+        </p>
       </div>
 
       {/* Skills */}

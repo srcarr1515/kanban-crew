@@ -23,6 +23,7 @@ mod remote_projects;
 mod repos;
 mod sessions;
 mod task_attempts;
+mod vision;
 mod workspaces;
 
 impl McpServer {
@@ -38,12 +39,14 @@ impl McpServer {
             + Self::issue_relationships_tools_router()
             + Self::task_attempts_tools_router()
             + Self::session_tools_router()
+            + Self::vision_tools_router()
     }
 
     pub fn orchestrator_mode_router() -> rmcp::handler::server::tool::ToolRouter<Self> {
         let mut router = Self::context_tools_router()
             + Self::workspaces_tools_router()
-            + Self::session_tools_router();
+            + Self::session_tools_router()
+            + Self::vision_tools_router();
         router.remove_route::<(), ()>("list_workspaces");
         router.remove_route::<(), ()>("delete_workspace");
         router
@@ -401,6 +404,7 @@ mod tests {
         let actual = tool_names(McpServer::orchestrator_mode_router());
         let expected = BTreeSet::from([
             "create_session".to_string(),
+            "describe_image".to_string(),
             "get_context".to_string(),
             "get_execution".to_string(),
             "list_sessions".to_string(),
@@ -418,6 +422,7 @@ mod tests {
 
         assert!(actual.contains("list_workspaces"));
         assert!(actual.contains("delete_workspace"));
+        assert!(actual.contains("describe_image"));
         assert!(!actual.contains("output_markdown"));
     }
 
@@ -444,6 +449,7 @@ mod tests {
                 }],
             }),
             mode: McpMode::Global,
+            mcp_permissions: None,
         };
 
         assert_eq!(server.orchestrator_session_id(), Some(session_id));
@@ -459,6 +465,7 @@ mod tests {
             tool_router: ToolRouter::default(),
             context: None,
             mode: McpMode::Orchestrator,
+            mcp_permissions: None,
         };
 
         assert_eq!(server.orchestrator_session_id(), None);

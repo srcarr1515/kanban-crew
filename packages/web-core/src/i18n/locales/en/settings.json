@@ -442,6 +442,20 @@
           "helper": "Override the default API endpoint. Useful for proxies or self-hosted instances.",
           "placeholder": "https://api.example.com/v1"
         }
+      },
+      "visionModel": {
+        "title": "Vision Model",
+        "description": "Fallback model used when images are attached and the active model has no vision capability. Also powers the vision MCP tool.",
+        "provider": {
+          "label": "Provider",
+          "helper": "Select the AI provider for vision operations.",
+          "placeholder": "Select provider"
+        },
+        "model": {
+          "label": "Model",
+          "helper": "Specify the model identifier for vision operations.",
+          "placeholder": "e.g. claude-opus-4"
+        }
       }
     },
     "mcp": {

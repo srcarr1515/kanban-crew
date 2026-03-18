@@ -28,6 +28,7 @@ import {
   updateChatThreadTitle,
   type ChatAttachment,
   type ChatThread,
+  type VisionFallbackInfo,
 } from '@/shared/lib/local/chatApi';
 import {
   listCrewMembers,
@@ -44,10 +45,13 @@ export function ChatPanel() {
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [optimisticText, setOptimisticText] = useState<string | null>(null);
+  const [optimisticImages, setOptimisticImages] = useState<Array<{ dataUrl: string; mimeType: string }>>([]);
   const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
   const [showCrewPicker, setShowCrewPicker] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ id: string; dataUrl: string; mimeType: string; name: string }>>([]);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [visionFallback, setVisionFallback] = useState<VisionFallbackInfo | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -199,11 +203,17 @@ export function ChatPanel() {
       mime_type: a.mimeType,
     }));
 
+    // Capture image data for optimistic rendering before clearing
+    const optimisticImgs = attachments.map((a) => ({ dataUrl: a.dataUrl, mimeType: a.mimeType }));
+
     setInput('');
     setAttachments([]);
     setOptimisticText(text || '\u200b'); // zero-width space keeps bubble visible
+    setOptimisticImages(optimisticImgs);
     setIsStreaming(true);
     setStreamingContent('');
+    setErrorMessage(null);
+    setVisionFallback(null);
     abortRef.current = false;
 
     // Check before streaming so we capture the pre-send state
@@ -214,15 +224,24 @@ export function ChatPanel() {
       let accumulated = '';
       for await (const chunk of streamChatCompletion(activeThreadId, text || ' ', selectedCrewId, chatAttachments)) {
         if (abortRef.current) break;
-        accumulated += chunk;
-        setStreamingContent(accumulated);
+        if (chunk.type === 'text') {
+          accumulated += chunk.text;
+          setStreamingContent(accumulated);
+        } else if (chunk.type === 'vision_fallback') {
+          setVisionFallback(chunk.info);
+        }
       }
-    } catch {
-      // Stream ended or error
+    } catch (err) {
+      // Extract a human-readable message from the API error
+      const raw = err instanceof Error ? err.message : String(err);
+      // The API wraps errors as JSON with {error:{message}}; try to extract it
+      const jsonMatch = raw.match(/"message"\s*:\s*"([^"]+)"/);
+      setErrorMessage(jsonMatch ? jsonMatch[1] : raw);
     } finally {
       setIsStreaming(false);
       setStreamingContent('');
       setOptimisticText(null);
+      setOptimisticImages([]);
       // Refresh messages to get the persisted user + assistant messages
       await queryClient.invalidateQueries({
         queryKey: ['chat-messages', activeThreadId],
@@ -337,7 +356,9 @@ export function ChatPanel() {
               thread_id: activeThreadId ?? '',
               role: 'user',
               content: optimisticText,
-              metadata: null,
+              metadata: optimisticImages.length > 0
+                ? JSON.stringify({ images: optimisticImages.map((img) => ({ dataUrl: img.dataUrl, mime_type: img.mimeType })) })
+                : null,
               created_at: new Date().toISOString(),
             }}
           />
@@ -345,6 +366,21 @@ export function ChatPanel() {
         {isStreaming && <StreamingMessage content={streamingContent} crewMember={lockedCrewMember} />}
         <div ref={messagesEndRef} />
       </div>
+
+      {/* Error banner */}
+      {errorMessage && (
+        <div className="shrink-0 border-t border-red-500/30 bg-red-500/10 px-3 py-2 flex items-start gap-2 text-xs">
+          <span className="text-red-400 font-medium flex-1">{errorMessage}</span>
+          <button
+            type="button"
+            onClick={() => setErrorMessage(null)}
+            className="shrink-0 text-red-400/60 hover:text-red-400 transition-colors"
+            title="Dismiss"
+          >
+            <XIcon className="size-3.5" />
+          </button>
+        </div>
+      )}
 
       {/* Streaming status bar — always visible above the input regardless of scroll */}
       {isStreaming && (
@@ -366,6 +402,11 @@ export function ChatPanel() {
           <span className="text-brand/80 font-medium">
             {lockedCrewMember ? `${lockedCrewMember.name} is thinking…` : 'Thinking…'}
           </span>
+          {visionFallback && (
+            <span className="ml-auto text-[10px] text-low" title={`Fallback: using ${visionFallback.vision_provider}/${visionFallback.vision_model} for vision`}>
+              via {visionFallback.vision_model}
+            </span>
+          )}
         </div>
       )}
 

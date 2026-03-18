@@ -12,6 +12,23 @@ use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
 
+/// MCP permission flag for vision tools (describe_image).
+const MCP_VISION_PERMISSION: &str = "mcp.vision";
+
+/// Returns true if the role name suggests QA, UX, design, or testing work —
+/// these roles get `mcp.vision` enabled by default.
+fn role_has_default_vision(role: &str) -> bool {
+    let lower = role.to_ascii_lowercase();
+    lower.contains("qa")
+        || lower.contains("quality")
+        || lower.contains("test")
+        || lower.contains("ux")
+        || lower.contains("design")
+        || lower.contains("ui")
+        || lower.contains("visual")
+        || lower.contains("review")
+}
+
 // ── Request types ────────────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -92,7 +109,15 @@ async fn create_crew_member(
     let tool_access = request
         .tool_access
         .map(|v| v.to_string())
-        .unwrap_or_else(|| "[]".to_string());
+        .unwrap_or_else(|| {
+            // When tool_access is not explicitly provided, set role-based
+            // defaults: QA / UX / design / tester roles get mcp.vision enabled.
+            if role_has_default_vision(&request.role) {
+                serde_json::json!([MCP_VISION_PERMISSION]).to_string()
+            } else {
+                "[]".to_string()
+            }
+        });
     let personality = request.personality.unwrap_or_default();
     let ai_provider = request.ai_provider.filter(|s| !s.is_empty());
     let ai_model = request.ai_model.filter(|s| !s.is_empty());
@@ -144,9 +169,13 @@ async fn update_crew_member(
         .map(|s| if s.is_empty() { None } else { Some(s.as_str()) });
 
     // For skills: absent (None) → keep, Some(null) → clear to DB NULL, Some(array) → set
-    let skills_update: Option<Option<String>> = request
-        .skills
-        .map(|v| if v.is_null() { None } else { Some(v.to_string()) });
+    let skills_update: Option<Option<String>> = request.skills.map(|v| {
+        if v.is_null() {
+            None
+        } else {
+            Some(v.to_string())
+        }
+    });
 
     // Use CASE expressions for nullable fields so we can explicitly set NULL
     let member = sqlx::query_as::<_, CrewMember>(

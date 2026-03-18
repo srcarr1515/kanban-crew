@@ -47,6 +47,18 @@ fn default_true() -> bool {
     true
 }
 
+/// Vision model configuration — used as fallback when images are present
+/// and the active model has no vision capability, and also backs the vision MCP tool.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+pub struct VisionModelConfig {
+    /// The provider id for vision operations (e.g. "anthropic", "openai", "google")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<String>,
+    /// The model id for vision operations (e.g. "claude-opus-4")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+}
+
 /// Global AI provider configuration
 #[derive(Clone, Debug, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
 pub struct AiProviderConfig {
@@ -99,6 +111,8 @@ pub struct Config {
     pub relay_host_name: Option<String>,
     #[serde(default)]
     pub ai_providers: AiProviderConfig,
+    #[serde(default)]
+    pub vision_model: VisionModelConfig,
 }
 
 impl Config {
@@ -128,6 +142,7 @@ impl Config {
             relay_enabled: old_config.relay_enabled,
             relay_host_name: old_config.relay_host_name,
             ai_providers: AiProviderConfig::default(),
+            vision_model: VisionModelConfig::default(),
         }
     }
 
@@ -185,6 +200,7 @@ impl Default for Config {
             relay_enabled: true,
             relay_host_name: None,
             ai_providers: AiProviderConfig::default(),
+            vision_model: VisionModelConfig::default(),
         }
     }
 }

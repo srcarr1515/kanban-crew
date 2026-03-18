@@ -255,14 +255,30 @@ async fn chat_completion(
 ) -> Result<Response<Body>, ApiError> {
     let pool = &deployment.db().pool;
 
-    // 1. Persist the user message
+    // 1. Persist the user message (with image metadata if present)
     let user_msg_id = Uuid::new_v4().to_string();
+    let metadata: Option<String> = request.images.as_ref().and_then(|imgs| {
+        if imgs.is_empty() {
+            return None;
+        }
+        let image_entries: Vec<serde_json::Value> = imgs
+            .iter()
+            .map(|img| {
+                serde_json::json!({
+                    "dataUrl": format!("data:{};base64,{}", img.mime_type, img.base64),
+                    "mime_type": img.mime_type,
+                })
+            })
+            .collect();
+        Some(serde_json::json!({ "images": image_entries }).to_string())
+    });
     sqlx::query(
-        "INSERT INTO chat_messages (id, thread_id, role, content) VALUES (?, ?, 'user', ?)",
+        "INSERT INTO chat_messages (id, thread_id, role, content, metadata) VALUES (?, ?, 'user', ?, ?)",
     )
     .bind(&user_msg_id)
     .bind(&request.thread_id)
     .bind(&request.content)
+    .bind(&metadata)
     .execute(pool)
     .await?;
 
@@ -319,18 +335,26 @@ async fn chat_completion(
                 serde_json::from_str::<Vec<String>>(skills_json).unwrap_or_default()
             } else {
                 // Null means use all defaults
-                skill_registry.disk_skills().map(|s| s.name.clone()).collect()
+                skill_registry
+                    .disk_skills()
+                    .map(|s| s.name.clone())
+                    .collect()
             }
         } else {
             // No crew member — use all defaults
-            skill_registry.disk_skills().map(|s| s.name.clone()).collect()
+            skill_registry
+                .disk_skills()
+                .map(|s| s.name.clone())
+                .collect()
         };
 
         if active_skill_names.is_empty() {
             String::new()
         } else {
             // Load DB skills (user overrides) — fetch all and index by name
-            let db_skills = db::models::skill::Skill::list(pool).await.unwrap_or_default();
+            let db_skills = db::models::skill::Skill::list(pool)
+                .await
+                .unwrap_or_default();
             let db_skill_map: std::collections::HashMap<&str, &db::models::skill::Skill> =
                 db_skills.iter().map(|s| (s.name.as_str(), s)).collect();
 
@@ -429,26 +453,85 @@ async fn chat_completion(
         member_provider_id.or_else(|| config.ai_providers.default_provider.clone());
     let effective_model = member_model.or_else(|| config.ai_providers.default_model.clone());
 
-    // Look up the provider entry for API key / base URL
-    let provider_entry = effective_provider_id.as_ref().and_then(|pid| {
-        config
-            .ai_providers
-            .providers
-            .iter()
-            .find(|p| &p.id == pid && p.enabled)
-    });
+    let images = request.images.as_deref();
+    let has_images = images.map(|imgs| !imgs.is_empty()).unwrap_or(false);
 
-    let resolved_api_key = provider_entry
-        .and_then(|p| p.api_key.clone())
-        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
-    let resolved_base_url = provider_entry.and_then(|p| p.base_url.clone());
-    let resolved_model = effective_model;
-    let resolved_provider_id = effective_provider_id;
+    // 4b. Vision fallback: when images are present and a vision model is configured,
+    //     swap in the vision provider/model so the request goes to a vision-capable model.
+    let vision_config = &config.vision_model;
+    let vision_fallback_meta: Option<serde_json::Value>;
+    let (resolved_provider_id, resolved_model, resolved_api_key, resolved_base_url) =
+        if has_images && vision_config.provider.is_some() && vision_config.model.is_some() {
+            let vision_pid = vision_config.provider.clone().unwrap();
+            let vision_model = vision_config.model.clone().unwrap();
+
+            // Only fall back if the vision model differs from the effective model
+            let needs_fallback = effective_provider_id.as_deref() != Some(vision_pid.as_str())
+                || effective_model.as_deref() != Some(vision_model.as_str());
+
+            if needs_fallback {
+                let vision_entry = config
+                    .ai_providers
+                    .providers
+                    .iter()
+                    .find(|p| p.id == vision_pid && p.enabled);
+                let api_key = vision_entry
+                    .and_then(|p| p.api_key.clone())
+                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+                let base_url = vision_entry.and_then(|p| p.base_url.clone());
+
+                tracing::info!(
+                    original_provider = ?effective_provider_id,
+                    original_model = ?effective_model,
+                    vision_provider = %vision_pid,
+                    vision_model = %vision_model,
+                    "Vision fallback: re-routing to vision model because images are attached"
+                );
+
+                vision_fallback_meta = Some(serde_json::json!({
+                    "vision_fallback": true,
+                    "original_provider": effective_provider_id,
+                    "original_model": effective_model,
+                    "vision_provider": vision_pid,
+                    "vision_model": vision_model,
+                }));
+
+                (Some(vision_pid), Some(vision_model), api_key, base_url)
+            } else {
+                // Already using the vision model — no fallback needed
+                let provider_entry = effective_provider_id.as_ref().and_then(|pid| {
+                    config
+                        .ai_providers
+                        .providers
+                        .iter()
+                        .find(|p| &p.id == pid && p.enabled)
+                });
+                let api_key = provider_entry
+                    .and_then(|p| p.api_key.clone())
+                    .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+                let base_url = provider_entry.and_then(|p| p.base_url.clone());
+                vision_fallback_meta = None;
+                (effective_provider_id, effective_model, api_key, base_url)
+            }
+        } else {
+            // No images or no vision model configured — normal resolution
+            let provider_entry = effective_provider_id.as_ref().and_then(|pid| {
+                config
+                    .ai_providers
+                    .providers
+                    .iter()
+                    .find(|p| &p.id == pid && p.enabled)
+            });
+            let api_key = provider_entry
+                .and_then(|p| p.api_key.clone())
+                .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+            let base_url = provider_entry.and_then(|p| p.base_url.clone());
+            vision_fallback_meta = None;
+            (effective_provider_id, effective_model, api_key, base_url)
+        };
 
     // Drop the config lock before entering the streaming path
     drop(config);
-
-    let images = request.images.as_deref();
 
     // If a non-CLI provider is configured, use the API backend
     if let Some(ref pid) = resolved_provider_id {
@@ -479,11 +562,23 @@ async fn chat_completion(
             &api_key,
             &base_url,
             &model,
+            vision_fallback_meta.as_ref(),
         )
         .await
     } else {
-        // No provider configured — use CLI backend (default)
-        chat_completion_cli(pool, &request.thread_id, &history, &system_prompt, images).await
+        // No provider configured — use CLI backend (default).
+        // If images are attached and a vision model is configured, the fallback
+        // should have already routed us to the API path above. If we're still
+        // here, no vision model was configured either — reject with a clear error.
+        if has_images {
+            return Err(ApiError::BadRequest(
+                "The current chat backend (CLI) does not support image attachments. \
+                 To send images, configure a Vision Model in Settings > AI Providers, \
+                 or assign an AI provider with vision support to the crew member."
+                    .to_string(),
+            ));
+        }
+        chat_completion_cli(pool, &request.thread_id, &history, &system_prompt).await
     }
 }
 
@@ -494,7 +589,6 @@ async fn chat_completion_cli(
     thread_id: &str,
     history: &[ChatMessage],
     system_prompt: &str,
-    images: Option<&[ImageAttachment]>,
 ) -> Result<Response<Body>, ApiError> {
     use std::process::Stdio;
 
@@ -529,26 +623,13 @@ async fn chat_completion_cli(
         prompt.push_str("\n\n");
     }
     prompt.push_str("--- Conversation History ---\n");
-    let history_len = history.len();
-    for (i, msg) in history.iter().enumerate() {
+    for msg in history {
         let role_label = match msg.role.as_str() {
             "user" => "User",
             "assistant" => "Assistant",
             _ => continue,
         };
-        // For the last user message, note any attached images (CLI has no vision support)
-        let suffix = if i + 1 == history_len
-            && msg.role == "user"
-            && images.map(|imgs| !imgs.is_empty()).unwrap_or(false)
-        {
-            format!(
-                " [+{} image(s) attached]",
-                images.map(|imgs| imgs.len()).unwrap_or(0)
-            )
-        } else {
-            String::new()
-        };
-        prompt.push_str(&format!("\n{role_label}: {}{suffix}\n", msg.content));
+        prompt.push_str(&format!("\n{role_label}: {}\n", msg.content));
     }
     prompt.push_str("\nAssistant: ");
 
@@ -711,6 +792,7 @@ async fn chat_completion_provider_api(
     api_key: &str,
     base_url: &str,
     model: &str,
+    vision_fallback: Option<&serde_json::Value>,
 ) -> Result<Response<Body>, ApiError> {
     let non_system: Vec<&ChatMessage> = history.iter().filter(|m| m.role != "system").collect();
     let last_idx = non_system.len().saturating_sub(1);
@@ -828,10 +910,22 @@ async fn chat_completion_provider_api(
     let thread_id_owned = thread_id.to_string();
     let byte_stream = resp.bytes_stream();
     let is_openai = is_openai_compatible(provider_id);
+    let vision_fallback_owned = vision_fallback.cloned();
 
     let stream = async_stream::stream! {
         let mut full_text = String::new();
         let mut stream = std::pin::pin!(byte_stream);
+
+        // Emit vision fallback metadata event before content so the frontend
+        // knows which model is actually responding.
+        if let Some(ref fb) = vision_fallback_owned {
+            let sse_event = serde_json::json!({
+                "type": "vision_fallback",
+                "metadata": fb,
+            });
+            let sse_line = format!("data: {}\n\n", sse_event);
+            yield Ok::<_, std::io::Error>(bytes::Bytes::from(sse_line));
+        }
 
         while let Some(chunk_result) = stream.next().await {
             let chunk = match chunk_result {
@@ -912,15 +1006,17 @@ async fn chat_completion_provider_api(
             yield Ok(bytes::Bytes::from("data: [DONE]\n\n"));
         }
 
-        // Persist the full assistant message
+        // Persist the full assistant message (with vision fallback metadata if applicable)
         if !full_text.is_empty() {
             let msg_id = Uuid::new_v4().to_string();
+            let msg_metadata = vision_fallback_owned.as_ref().map(|fb| fb.to_string());
             let _ = sqlx::query(
-                "INSERT INTO chat_messages (id, thread_id, role, content) VALUES (?, ?, 'assistant', ?)",
+                "INSERT INTO chat_messages (id, thread_id, role, content, metadata) VALUES (?, ?, 'assistant', ?, ?)",
             )
             .bind(&msg_id)
             .bind(&thread_id_owned)
             .bind(&full_text)
+            .bind(&msg_metadata)
             .execute(&pool_clone)
             .await;
         }

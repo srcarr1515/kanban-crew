@@ -25,9 +25,47 @@ function AssistantAvatar({ crewMember }: { crewMember?: CrewMember | null }) {
   return <>{crewMember.avatar || crewMember.name.charAt(0).toUpperCase()}</>;
 }
 
+interface MessageImage {
+  dataUrl: string;
+  mime_type: string;
+}
+
+interface VisionFallbackMeta {
+  vision_fallback: true;
+  vision_provider: string;
+  vision_model: string;
+}
+
+function parseMessageImages(metadata: string | null): MessageImage[] {
+  if (!metadata) return [];
+  try {
+    const parsed = JSON.parse(metadata);
+    if (Array.isArray(parsed.images)) return parsed.images as MessageImage[];
+  } catch {
+    // invalid metadata, skip
+  }
+  return [];
+}
+
+function parseVisionFallback(metadata: string | null): VisionFallbackMeta | null {
+  if (!metadata) return null;
+  try {
+    const parsed = JSON.parse(metadata);
+    if (parsed.vision_fallback === true) return parsed as VisionFallbackMeta;
+  } catch {
+    // invalid metadata, skip
+  }
+  return null;
+}
+
 export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const isAssistant = message.role === 'assistant';
+  const images = useMemo(() => parseMessageImages(message.metadata), [message.metadata]);
+  const visionFallback = useMemo(
+    () => (isAssistant ? parseVisionFallback(message.metadata) : null),
+    [isAssistant, message.metadata]
+  );
   const proposals = useMemo(
     () => (isAssistant ? extractProposals(message.content) : []),
     [isAssistant, message.content]
@@ -73,6 +111,18 @@ export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
         )}
       </div>
       <div className={`min-w-0 max-w-[85%] space-y-1 ${isUser ? 'items-end' : ''}`}>
+        {images.length > 0 && (
+          <div className={`flex flex-wrap gap-1.5 ${isUser ? 'justify-end' : ''}`}>
+            {images.map((img, i) => (
+              <img
+                key={i}
+                src={img.dataUrl}
+                alt="attachment"
+                className="max-h-48 max-w-full rounded-lg object-contain"
+              />
+            ))}
+          </div>
+        )}
         <div
           className={`rounded-xl px-3 py-2 text-sm whitespace-pre-wrap break-words ${
             isUser
@@ -82,6 +132,14 @@ export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
         >
           {displayContent}
         </div>
+        {visionFallback && (
+          <div
+            className="text-[10px] text-low px-1"
+            title={`Vision fallback: ${visionFallback.vision_provider}/${visionFallback.vision_model}`}
+          >
+            via {visionFallback.vision_model}
+          </div>
+        )}
         {proposals.map((proposal, i) => (
           <ProposalCard key={`create-${i}`} proposal={proposal} />
         ))}

@@ -84,6 +84,14 @@ export interface ChatAttachment {
   mime_type: string;
 }
 
+export interface VisionFallbackInfo {
+  vision_fallback: true;
+  original_provider: string | null;
+  original_model: string | null;
+  vision_provider: string;
+  vision_model: string;
+}
+
 // ── Threads ─────────────────────────────────────────────────────────────────
 
 export function listChatThreads(projectId: string): Promise<ChatThread[]> {
@@ -128,9 +136,13 @@ export function listChatMessages(threadId: string): Promise<ChatMessage[]> {
 
 // ── Streaming completion ────────────────────────────────────────────────────
 
+export type StreamChunk =
+  | { type: 'text'; text: string }
+  | { type: 'vision_fallback'; info: VisionFallbackInfo };
+
 /**
  * Send a message and stream the assistant response.
- * Returns an async generator that yields text chunks.
+ * Returns an async generator that yields stream chunks (text deltas and metadata).
  * The full user + assistant messages are persisted server-side.
  */
 export async function* streamChatCompletion(
@@ -138,7 +150,7 @@ export async function* streamChatCompletion(
   content: string,
   crewMemberId?: string | null,
   attachments?: ChatAttachment[]
-): AsyncGenerator<string, void, unknown> {
+): AsyncGenerator<StreamChunk, void, unknown> {
   const body: Record<string, unknown> = { thread_id: threadId, content };
   if (crewMemberId) body.crew_member_id = crewMemberId;
   if (attachments && attachments.length > 0) body.images = attachments;
@@ -174,7 +186,9 @@ export async function* streamChatCompletion(
           event.type === 'content_block_delta' &&
           event.delta?.text
         ) {
-          yield event.delta.text;
+          yield { type: 'text', text: event.delta.text };
+        } else if (event.type === 'vision_fallback' && event.metadata) {
+          yield { type: 'vision_fallback', info: event.metadata as VisionFallbackInfo };
         }
       } catch {
         // Skip non-JSON lines

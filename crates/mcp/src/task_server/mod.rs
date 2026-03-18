@@ -1,7 +1,7 @@
 mod handler;
 mod tools;
 
-use std::path::Path;
+use std::{collections::HashSet, path::Path};
 
 use anyhow::Context;
 use db::models::{requests::ContainerQuery, workspace::WorkspaceContext};
@@ -53,6 +53,9 @@ pub struct McpServer {
     tool_router: ToolRouter<McpServer>,
     context: Option<McpContext>,
     mode: McpMode,
+    /// MCP permission flags granted to the current crew member (e.g. `"mcp.vision"`).
+    /// `None` means all permissions are granted (backward-compat / global mode).
+    mcp_permissions: Option<HashSet<String>>,
 }
 
 impl McpServer {
@@ -63,6 +66,7 @@ impl McpServer {
             tool_router: Self::global_mode_router(),
             context: None,
             mode: McpMode::Global,
+            mcp_permissions: None, // global mode grants all permissions
         }
     }
 
@@ -73,6 +77,7 @@ impl McpServer {
             tool_router: Self::orchestrator_mode_router(),
             context: None,
             mode: McpMode::Orchestrator,
+            mcp_permissions: None,
         }
     }
 
@@ -95,7 +100,32 @@ impl McpServer {
         }
 
         self.context = context;
+
+        // Load MCP permission flags from environment.
+        // When set, only the listed permissions are granted. When absent, all
+        // permissions are granted (backward-compat for global mode & legacy
+        // orchestrators).
+        if let Ok(raw) = std::env::var("VK_MCP_PERMISSIONS") {
+            let perms: HashSet<String> = raw
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            tracing::info!(?perms, "MCP permission flags loaded from environment");
+            self.mcp_permissions = Some(perms);
+        }
+
         Ok(self)
+    }
+
+    /// Returns `true` if the given MCP permission flag is granted.
+    /// When no explicit permission set is configured (e.g. global mode),
+    /// all permissions are granted.
+    pub fn has_mcp_permission(&self, perm: &str) -> bool {
+        match &self.mcp_permissions {
+            None => true,
+            Some(set) => set.contains(perm),
+        }
     }
 
     pub fn mode(&self) -> &McpMode {
