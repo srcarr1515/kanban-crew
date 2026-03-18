@@ -49,6 +49,36 @@ export interface Proposal {
   tickets: ProposalTicket[];
 }
 
+export interface ModifyProposalItem {
+  task_id: string;
+  title?: string;
+  description?: string;
+  status?: string;
+}
+
+export interface ModifyProposal {
+  modifications: ModifyProposalItem[];
+}
+
+export interface DeleteProposalItem {
+  task_id: string;
+  title: string;
+}
+
+export interface DeleteProposal {
+  deletions: DeleteProposalItem[];
+}
+
+export interface QueryBlock {
+  sql: string;
+}
+
+export interface QueryResult {
+  columns: string[];
+  rows: unknown[][];
+  row_count: number;
+}
+
 export interface ChatAttachment {
   base64: string;
   mime_type: string;
@@ -185,6 +215,81 @@ export function extractProposals(content: string): Proposal[] {
         .filter(Boolean) as ProposalTicket[];
       if (tickets.length > 0) {
         proposals.push({ tickets });
+      }
+    } catch {
+      // malformed JSON, skip
+    }
+  }
+  return proposals;
+}
+
+const MODIFY_PROPOSAL_REGEX = /```modify_proposal\n([\s\S]*?)\n```/g;
+
+/** Extract modify-proposal blocks from an assistant message. */
+export function extractModifyProposals(content: string): ModifyProposal[] {
+  const proposals: ModifyProposal[] = [];
+  let match;
+  while ((match = MODIFY_PROPOSAL_REGEX.exec(content)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (!Array.isArray(parsed.modifications)) continue;
+      const modifications = parsed.modifications.filter(
+        (m: unknown) =>
+          m &&
+          typeof m === 'object' &&
+          typeof (m as Record<string, unknown>).task_id === 'string'
+      ) as ModifyProposalItem[];
+      if (modifications.length > 0) {
+        proposals.push({ modifications });
+      }
+    } catch {
+      // malformed JSON, skip
+    }
+  }
+  return proposals;
+}
+
+const QUERY_BLOCK_REGEX = /```query\n([\s\S]*?)\n```/g;
+
+/** Extract query blocks from an assistant message. */
+export function extractQueryBlocks(content: string): QueryBlock[] {
+  const blocks: QueryBlock[] = [];
+  let match;
+  while ((match = QUERY_BLOCK_REGEX.exec(content)) !== null) {
+    const sql = match[1].trim();
+    if (sql) {
+      blocks.push({ sql });
+    }
+  }
+  return blocks;
+}
+
+/** Execute a read-only SQL query against the database. */
+export function executeQuery(sql: string): Promise<QueryResult> {
+  return chatFetch<QueryResult>('/api/local/chat/query', {
+    method: 'POST',
+    body: JSON.stringify({ sql }),
+  });
+}
+
+const DELETE_PROPOSAL_REGEX = /```delete_proposal\n([\s\S]*?)\n```/g;
+
+/** Extract delete-proposal blocks from an assistant message. */
+export function extractDeleteProposals(content: string): DeleteProposal[] {
+  const proposals: DeleteProposal[] = [];
+  let match;
+  while ((match = DELETE_PROPOSAL_REGEX.exec(content)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (!Array.isArray(parsed.deletions)) continue;
+      const deletions = parsed.deletions.filter(
+        (d: unknown) =>
+          d &&
+          typeof d === 'object' &&
+          typeof (d as Record<string, unknown>).task_id === 'string'
+      ) as DeleteProposalItem[];
+      if (deletions.length > 0) {
+        proposals.push({ deletions });
       }
     } catch {
       // malformed JSON, skip

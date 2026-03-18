@@ -10,7 +10,7 @@ use deployment::Deployment;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use sqlx::FromRow;
+use sqlx::{Column, FromRow, Row};
 use tokio::io::AsyncBufReadExt;
 use utils::response::ApiResponse;
 use uuid::Uuid;
@@ -90,6 +90,7 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/local/chat/threads/{id}/title", post(update_thread_title))
         .route("/local/chat/messages", get(list_messages))
         .route("/local/chat/completions", post(chat_completion))
+        .route("/local/chat/query", post(execute_readonly_query))
 }
 
 // ── Thread handlers ─────────────────────────────────────────────────────────
@@ -197,7 +198,8 @@ async fn list_messages(
 
 const SYSTEM_PROMPT: &str = "\
 You are a helpful project planning assistant embedded in a Kanban board app. \
-Help the user brainstorm features, discuss implementation strategies, and break work into tasks.\n\n\
+Help the user brainstorm features, discuss implementation strategies, and manage tasks.\n\n\
+# Creating Tickets\n\
 When the user asks you to create tickets or plan work, respond with a structured proposal using this EXACT JSON format embedded in your response:\n\n\
 ```proposal\n\
 {\"tickets\": [{\"title\": \"Parent task\", \"description\": \"What to do\", \"status\": \"todo\", \"subtasks\": [{\"title\": \"Child step\", \"description\": \"Sub-step detail\", \"status\": \"todo\"}]}]}\n\
@@ -208,7 +210,39 @@ Grouping rules:\n\
 - Use separate top-level tickets for distinct, unrelated work items.\n\
 - Use subtasks when a ticket has implementation steps that belong together as a batch (e.g. backend + frontend for the same feature, or setup + implementation + tests for one piece of work).\n\
 - Omit the subtasks field entirely for simple, self-contained tickets.\n\
-- Subtasks should not have their own subtasks — keep the hierarchy to one level deep.";
+- Subtasks should not have their own subtasks — keep the hierarchy to one level deep.\n\n\
+# Modifying Tickets\n\
+When the user asks you to update, modify, rename, change the description, or move a ticket to a different status, respond with:\n\n\
+```modify_proposal\n\
+{\"modifications\": [{\"task_id\": \"the-task-id\", \"title\": \"Updated title\", \"description\": \"Updated description\", \"status\": \"ready\"}]}\n\
+```\n\n\
+Only include fields that should change — omit fields that stay the same. The task_id field is always required.\n\n\
+# Deleting Tickets\n\
+When the user asks you to delete or remove a ticket, respond with:\n\n\
+```delete_proposal\n\
+{\"deletions\": [{\"task_id\": \"the-task-id\", \"title\": \"Task title for confirmation\"}]}\n\
+```\n\n\
+The user will see a confirmation card before any modifications or deletions are applied. \
+Never modify or delete tickets without using the proposal format — always let the user confirm first.\n\n\
+# Querying the Database\n\
+You can research data in the database by writing read-only SQL queries. Wrap your query in a special code block:\n\n\
+```query\n\
+SELECT id, title, status FROM tasks WHERE project_id = ? LIMIT 20\n\
+```\n\n\
+The user will see a \"Run Query\" button and can execute it to see the results as a table. \
+Only SELECT, WITH, and EXPLAIN queries are allowed — no mutations. Results are capped at 500 rows.\n\n\
+## Database Schema\n\
+The database is SQLite. Key tables:\n\n\
+**projects** — id (BLOB/UUID), name (TEXT), created_at, updated_at\n\
+**tasks** — id (BLOB/UUID), project_id (BLOB FK→projects), title (TEXT), description (TEXT), status (TEXT: todo/ready/in_progress/in_review/done/cancelled), sort_order (INT), parent_task_id (BLOB, optional FK→tasks), parent_task_sort_order (REAL), created_at, updated_at\n\
+**chat_threads** — id (TEXT), project_id (BLOB FK→projects), issue_id (TEXT), crew_member_id (BLOB FK→crew_members), title (TEXT), created_at, updated_at\n\
+**chat_messages** — id (TEXT), thread_id (TEXT FK→chat_threads), role (TEXT: user/assistant/system), content (TEXT), metadata (TEXT), created_at\n\
+**crew_members** — id (BLOB/UUID), name (TEXT), role (TEXT), avatar (TEXT), role_prompt (TEXT), tool_access (TEXT/JSON), personality (TEXT), ai_provider (TEXT), ai_model (TEXT), created_at, updated_at\n\
+**workspaces** — id (BLOB/UUID), branch (TEXT), container_ref (TEXT), created_at, updated_at\n\
+**sessions** — id (BLOB/UUID), workspace_id (BLOB FK→workspaces), executor (TEXT), created_at, updated_at\n\
+**execution_processes** — id (BLOB/UUID), session_id (BLOB FK→sessions), run_reason (TEXT), executor_action (TEXT), status (TEXT), created_at, updated_at\n\n\
+Note: BLOB id columns store UUIDs as binary. Use hex(id) to display them as readable strings, or cast with quote(id) if needed.\n\
+When filtering by a known UUID string like 'abc-123-...', use the tasks/projects as shown in the Current Tasks section above — the id values listed there can be used directly.";
 
 // ── AI completion (streaming) ───────────────────────────────────────────────
 
@@ -272,7 +306,7 @@ async fn chat_completion(
         None
     };
 
-    let system_prompt = if let Some(ref cm) = crew_row {
+    let mut system_prompt = if let Some(ref cm) = crew_row {
         let mut prompt = format!(
             "# Identity\n\
              You are \"{}\", a crew member on a software development team.\n\n\
@@ -291,6 +325,37 @@ async fn chat_completion(
     } else {
         SYSTEM_PROMPT.to_string()
     };
+
+    // Inject current task list so the AI can reference task IDs for modifications/deletions
+    let thread_project_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT project_id FROM chat_threads WHERE id = ?",
+    )
+    .bind(&request.thread_id)
+    .fetch_optional(pool)
+    .await?;
+
+    if let Some(proj_id) = thread_project_id {
+        let tasks: Vec<(String, String, Option<String>, String, Option<String>)> = sqlx::query_as(
+            r#"SELECT id, title, description, status, parent_task_id
+               FROM tasks WHERE project_id = ?
+               ORDER BY parent_task_sort_order ASC, sort_order ASC, created_at ASC"#,
+        )
+        .bind(proj_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
+
+        if !tasks.is_empty() {
+            system_prompt.push_str("\n\n# Current Tasks\nHere are the existing tasks on the board. Use these task_id values when proposing modifications or deletions:\n");
+            for (id, title, _desc, status, parent_id) in &tasks {
+                let indent = if parent_id.is_some() { "  " } else { "" };
+                system_prompt.push_str(&format!(
+                    "{}- [{}] {} (id: {})\n",
+                    indent, status, title, id
+                ));
+            }
+        }
+    }
 
     // 4. Resolve AI provider: per-member override → global config → env fallback
     let config = deployment.config().read().await;
@@ -804,4 +869,123 @@ async fn chat_completion_provider_api(
         .header("connection", "keep-alive")
         .body(Body::from_stream(stream))
         .unwrap())
+}
+
+// ── Read-only query execution ────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ExecuteQueryRequest {
+    pub sql: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct QueryResult {
+    pub columns: Vec<String>,
+    pub rows: Vec<Vec<serde_json::Value>>,
+    pub row_count: usize,
+}
+
+/// Execute a read-only SQL query against the database.
+/// Only SELECT statements are allowed — any mutation is rejected.
+async fn execute_readonly_query(
+    State(deployment): State<DeploymentImpl>,
+    Json(request): Json<ExecuteQueryRequest>,
+) -> Result<ResponseJson<ApiResponse<QueryResult>>, ApiError> {
+    let sql = request.sql.trim().to_string();
+
+    // Validate the query is read-only by checking the first keyword
+    let first_word = sql
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_uppercase();
+
+    if first_word != "SELECT" && first_word != "WITH" && first_word != "EXPLAIN" {
+        return Err(ApiError::BadRequest(
+            "Only SELECT, WITH, and EXPLAIN queries are allowed.".to_string(),
+        ));
+    }
+
+    // Extra safety: reject if the query contains mutation keywords as standalone statements
+    let upper = sql.to_uppercase();
+    for forbidden in &[
+        "INSERT ", "UPDATE ", "DELETE ", "DROP ", "ALTER ", "CREATE ", "REPLACE ", "ATTACH ",
+        "DETACH ", "PRAGMA ", "VACUUM", "REINDEX",
+    ] {
+        for stmt in upper.split(';') {
+            let trimmed = stmt.trim();
+            if trimmed.starts_with(forbidden.trim()) {
+                return Err(ApiError::BadRequest(format!(
+                    "Query contains forbidden keyword: {}. Only read-only queries are allowed.",
+                    forbidden.trim()
+                )));
+            }
+        }
+    }
+
+    let pool = &deployment.db().pool;
+
+    // Cap results to prevent unbounded memory usage
+    let limited_sql = if upper.contains("LIMIT") {
+        sql.clone()
+    } else {
+        format!("{} LIMIT 500", sql.trim_end_matches(';'))
+    };
+
+    let rows = sqlx::query(&limited_sql)
+        .fetch_all(pool)
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("Query error: {e}")))?;
+
+    let columns: Vec<String> = if rows.is_empty() {
+        vec![]
+    } else {
+        rows[0]
+            .columns()
+            .iter()
+            .map(|c: &sqlx::sqlite::SqliteColumn| c.name().to_string())
+            .collect()
+    };
+
+    let mut result_rows: Vec<Vec<serde_json::Value>> = Vec::with_capacity(rows.len());
+    for row in &rows {
+        let mut values: Vec<serde_json::Value> = Vec::with_capacity(columns.len());
+        for (i, _col) in columns.iter().enumerate() {
+            let val: serde_json::Value =
+                if let Ok(v) = row.try_get::<Option<String>, _>(i) {
+                    v.map(serde_json::Value::String)
+                        .unwrap_or(serde_json::Value::Null)
+                } else if let Ok(v) = row.try_get::<Option<i64>, _>(i) {
+                    v.map(|n| serde_json::Value::Number(n.into()))
+                        .unwrap_or(serde_json::Value::Null)
+                } else if let Ok(v) = row.try_get::<Option<f64>, _>(i) {
+                    v.and_then(|n| serde_json::Number::from_f64(n).map(serde_json::Value::Number))
+                        .unwrap_or(serde_json::Value::Null)
+                } else if let Ok(v) = row.try_get::<Option<bool>, _>(i) {
+                    v.map(serde_json::Value::Bool)
+                        .unwrap_or(serde_json::Value::Null)
+                } else if let Ok(v) = row.try_get::<Option<Vec<u8>>, _>(i) {
+                    v.map(|b| {
+                        serde_json::Value::String(
+                            b.iter()
+                                .map(|byte| format!("{byte:02x}"))
+                                .collect::<String>(),
+                        )
+                    })
+                    .unwrap_or(serde_json::Value::Null)
+                } else {
+                    serde_json::Value::Null
+                };
+            values.push(val);
+        }
+        result_rows.push(values);
+    }
+
+    let row_count = result_rows.len();
+
+    Ok(ResponseJson(ApiResponse::success(QueryResult {
+        columns,
+        rows: result_rows,
+        row_count,
+    })))
 }

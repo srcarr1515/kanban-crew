@@ -13,6 +13,12 @@ import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
 import { IconButton } from '@vibe/ui/components/IconButton';
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+} from '@vibe/ui/components/Dropdown';
+import {
   SettingsCard,
   SettingsField,
   SettingsInput,
@@ -79,24 +85,37 @@ export function AiProvidersSettingsSection() {
     []
   );
 
-  const handleAddProvider = useCallback(() => {
-    // Find first preset not already added
-    const existingIds = new Set(draft.providers.map((p) => p.id));
-    const preset = PRESET_PROVIDERS.find((p) => !existingIds.has(p.id));
-    const newProvider: AiProviderEntry = preset
-      ? { ...preset, api_key: null, base_url: null }
-      : {
+  const handleAddProvider = useCallback(
+    (presetId?: string) => {
+      const existingIds = new Set(draft.providers.map((p) => p.id));
+      let newProvider: AiProviderEntry;
+      if (presetId) {
+        const preset = PRESET_PROVIDERS.find((p) => p.id === presetId);
+        newProvider = preset
+          ? { ...preset, api_key: null, base_url: null }
+          : { id: presetId, name: presetId, api_key: null, base_url: null, enabled: true };
+      } else {
+        newProvider = {
           id: `custom-${Date.now()}`,
           name: 'Custom Provider',
           api_key: null,
           base_url: null,
           enabled: true,
         };
-    updateDraft((prev) => ({
-      ...prev,
-      providers: [...prev.providers, newProvider],
-    }));
-  }, [draft.providers, updateDraft]);
+      }
+      if (existingIds.has(newProvider.id)) return;
+      updateDraft((prev) => ({
+        ...prev,
+        providers: [...prev.providers, newProvider],
+      }));
+    },
+    [draft.providers, updateDraft]
+  );
+
+  const availablePresets = useMemo(() => {
+    const existingIds = new Set(draft.providers.map((p) => p.id));
+    return PRESET_PROVIDERS.filter((p) => !existingIds.has(p.id));
+  }, [draft.providers]);
 
   const handleRemoveProvider = useCallback(
     (id: string) => {
@@ -264,14 +283,30 @@ export function AiProvidersSettingsSection() {
         title={t('settings.aiProviders.providers.title')}
         description={t('settings.aiProviders.providers.description')}
         headerAction={
-          <PrimaryButton
-            variant="tertiary"
-            onClick={handleAddProvider}
-            disabled={draft.providers.length >= PRESET_PROVIDERS.length + 5}
-          >
-            <PlusIcon className="size-icon-sm" weight="bold" />
-            {t('settings.aiProviders.providers.add')}
-          </PrimaryButton>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="flex items-center gap-1.5 text-sm text-brand hover:text-brand/80 transition-colors disabled:opacity-50"
+                disabled={availablePresets.length === 0}
+              >
+                <PlusIcon className="size-icon-sm" weight="bold" />
+                {t('settings.aiProviders.providers.add')}
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              {availablePresets.map((preset) => (
+                <DropdownMenuItem
+                  key={preset.id}
+                  onClick={() => handleAddProvider(preset.id)}
+                >
+                  {preset.name}
+                </DropdownMenuItem>
+              ))}
+              <DropdownMenuItem onClick={() => handleAddProvider()}>
+                Custom Provider
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         }
       >
         {draft.providers.length === 0 ? (

@@ -1,9 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
 import { RobotIcon, UserIcon } from '@phosphor-icons/react';
 import type { ChatMessage as ChatMessageType } from '@/shared/lib/local/chatApi';
-import { extractProposals } from '@/shared/lib/local/chatApi';
+import { extractProposals, extractModifyProposals, extractDeleteProposals, extractQueryBlocks } from '@/shared/lib/local/chatApi';
 import type { CrewMember } from '@/shared/lib/local/localApi';
 import { ProposalCard } from './ProposalCard';
+import { ModifyProposalCard } from './ModifyProposalCard';
+import { DeleteProposalCard } from './DeleteProposalCard';
+import { QueryCard } from './QueryCard';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -24,18 +27,33 @@ function AssistantAvatar({ crewMember }: { crewMember?: CrewMember | null }) {
 
 export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
   const isUser = message.role === 'user';
+  const isAssistant = message.role === 'assistant';
   const proposals = useMemo(
-    () => (message.role === 'assistant' ? extractProposals(message.content) : []),
-    [message.role, message.content]
+    () => (isAssistant ? extractProposals(message.content) : []),
+    [isAssistant, message.content]
+  );
+  const modifyProposals = useMemo(
+    () => (isAssistant ? extractModifyProposals(message.content) : []),
+    [isAssistant, message.content]
+  );
+  const deleteProposals = useMemo(
+    () => (isAssistant ? extractDeleteProposals(message.content) : []),
+    [isAssistant, message.content]
+  );
+  const queryBlocks = useMemo(
+    () => (isAssistant ? extractQueryBlocks(message.content) : []),
+    [isAssistant, message.content]
   );
 
-  // Strip proposal blocks from display text
+  const hasProposals = proposals.length > 0 || modifyProposals.length > 0 || deleteProposals.length > 0 || queryBlocks.length > 0;
+
+  // Strip all proposal/query blocks from display text
   const displayContent = useMemo(() => {
-    if (proposals.length === 0) return message.content;
+    if (!hasProposals) return message.content;
     return message.content
-      .replace(/```proposal\n[\s\S]*?\n```/g, '')
+      .replace(/```(?:proposal|modify_proposal|delete_proposal|query)\n[\s\S]*?\n```/g, '')
       .trim();
-  }, [message.content, proposals]);
+  }, [message.content, hasProposals]);
 
   return (
     <div className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -65,7 +83,16 @@ export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
           {displayContent}
         </div>
         {proposals.map((proposal, i) => (
-          <ProposalCard key={i} proposal={proposal} />
+          <ProposalCard key={`create-${i}`} proposal={proposal} />
+        ))}
+        {modifyProposals.map((proposal, i) => (
+          <ModifyProposalCard key={`modify-${i}`} proposal={proposal} />
+        ))}
+        {deleteProposals.map((proposal, i) => (
+          <DeleteProposalCard key={`delete-${i}`} proposal={proposal} />
+        ))}
+        {queryBlocks.map((query, i) => (
+          <QueryCard key={`query-${i}`} query={query} />
         ))}
       </div>
     </div>
@@ -116,10 +143,14 @@ interface StreamingMessageProps {
 
 export function StreamingMessage({ content, crewMember }: StreamingMessageProps) {
   const proposals = useMemo(() => extractProposals(content), [content]);
+  const modifyProposals = useMemo(() => extractModifyProposals(content), [content]);
+  const deleteProposals = useMemo(() => extractDeleteProposals(content), [content]);
+  const queryBlocks = useMemo(() => extractQueryBlocks(content), [content]);
+  const hasProposals = proposals.length > 0 || modifyProposals.length > 0 || deleteProposals.length > 0 || queryBlocks.length > 0;
   const displayContent = useMemo(() => {
-    if (proposals.length === 0) return content;
-    return content.replace(/```proposal\n[\s\S]*?\n```/g, '').trim();
-  }, [content, proposals]);
+    if (!hasProposals) return content;
+    return content.replace(/```(?:proposal|modify_proposal|delete_proposal|query)\n[\s\S]*?\n```/g, '').trim();
+  }, [content, hasProposals]);
 
   return (
     <div className="flex gap-2.5">
@@ -135,7 +166,16 @@ export function StreamingMessage({ content, crewMember }: StreamingMessageProps)
           {displayContent || <ResearchingIndicator crewMember={crewMember} />}
         </div>
         {proposals.map((proposal, i) => (
-          <ProposalCard key={i} proposal={proposal} />
+          <ProposalCard key={`create-${i}`} proposal={proposal} />
+        ))}
+        {modifyProposals.map((proposal, i) => (
+          <ModifyProposalCard key={`modify-${i}`} proposal={proposal} />
+        ))}
+        {deleteProposals.map((proposal, i) => (
+          <DeleteProposalCard key={`delete-${i}`} proposal={proposal} />
+        ))}
+        {queryBlocks.map((query, i) => (
+          <QueryCard key={`query-${i}`} query={query} />
         ))}
       </div>
     </div>
