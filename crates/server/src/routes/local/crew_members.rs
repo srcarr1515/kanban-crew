@@ -43,6 +43,10 @@ pub struct CreateCrewMemberRequest {
     pub ai_model: Option<String>,
     /// Skill configuration. `null`/absent = all defaults, `[]` = none, `["x"]` = only those.
     pub skills: Option<serde_json::Value>,
+    pub can_create_workspace: Option<bool>,
+    pub can_merge_workspace: Option<bool>,
+    pub can_propose_tasks: Option<bool>,
+    pub can_query_database: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,6 +64,10 @@ pub struct UpdateCrewMemberRequest {
     /// Skill configuration. Absent = keep existing, `null` = reset to all defaults,
     /// `[]` = no skills, `["x"]` = only those.
     pub skills: Option<serde_json::Value>,
+    pub can_create_workspace: Option<bool>,
+    pub can_merge_workspace: Option<bool>,
+    pub can_propose_tasks: Option<bool>,
+    pub can_query_database: Option<bool>,
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
@@ -80,7 +88,7 @@ async fn list_crew_members(
     let pool = &deployment.db().pool;
 
     let members = sqlx::query_as::<_, CrewMember>(
-        "SELECT id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, created_at, updated_at
+        "SELECT id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, can_create_workspace, can_merge_workspace, can_propose_tasks, can_query_database, created_at, updated_at
          FROM crew_members
          ORDER BY created_at ASC",
     )
@@ -126,11 +134,15 @@ async fn create_crew_member(
         .skills
         .filter(|v| !v.is_null())
         .map(|v| v.to_string());
+    let can_create_workspace = request.can_create_workspace.unwrap_or(true);
+    let can_merge_workspace = request.can_merge_workspace.unwrap_or(true);
+    let can_propose_tasks = request.can_propose_tasks.unwrap_or(true);
+    let can_query_database = request.can_query_database.unwrap_or(true);
 
     let member = sqlx::query_as::<_, CrewMember>(
-        r#"INSERT INTO crew_members (id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, created_at, updated_at"#,
+        r#"INSERT INTO crew_members (id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, can_create_workspace, can_merge_workspace, can_propose_tasks, can_query_database)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, can_create_workspace, can_merge_workspace, can_propose_tasks, can_query_database, created_at, updated_at"#,
     )
     .bind(id)
     .bind(&request.name)
@@ -142,6 +154,10 @@ async fn create_crew_member(
     .bind(&ai_provider)
     .bind(&ai_model)
     .bind(&skills)
+    .bind(can_create_workspace)
+    .bind(can_merge_workspace)
+    .bind(can_propose_tasks)
+    .bind(can_query_database)
     .fetch_one(pool)
     .await?;
 
@@ -189,9 +205,13 @@ async fn update_crew_member(
                ai_provider = CASE WHEN ? THEN ? ELSE ai_provider END,
                ai_model    = CASE WHEN ? THEN ? ELSE ai_model END,
                skills      = CASE WHEN ? THEN ? ELSE skills END,
+               can_create_workspace = COALESCE(?, can_create_workspace),
+               can_merge_workspace  = COALESCE(?, can_merge_workspace),
+               can_propose_tasks    = COALESCE(?, can_propose_tasks),
+               can_query_database   = COALESCE(?, can_query_database),
                updated_at  = datetime('now', 'subsec')
            WHERE id = ?
-           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, created_at, updated_at"#,
+           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, can_create_workspace, can_merge_workspace, can_propose_tasks, can_query_database, created_at, updated_at"#,
     )
     .bind(&request.name)
     .bind(&request.role)
@@ -205,6 +225,10 @@ async fn update_crew_member(
     .bind(ai_model_update.and_then(|v| v))
     .bind(skills_update.is_some())
     .bind(skills_update.and_then(|v| v))
+    .bind(request.can_create_workspace)
+    .bind(request.can_merge_workspace)
+    .bind(request.can_propose_tasks)
+    .bind(request.can_query_database)
     .bind(id)
     .fetch_optional(pool)
     .await?

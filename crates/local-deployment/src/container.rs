@@ -513,14 +513,13 @@ impl LocalContainerService {
         let mut executor_config = executor_config;
         let selected_task_id = pickup_result.selected_task_id;
         {
-            let crew_member_id: Option<String> = sqlx::query_scalar(
-                "SELECT crew_member_id FROM tasks WHERE id = ?",
-            )
-            .bind(selected_task_id)
-            .fetch_optional(&self.db.pool)
-            .await
-            .ok()
-            .flatten();
+            let crew_member_id: Option<String> =
+                sqlx::query_scalar("SELECT crew_member_id FROM tasks WHERE id = ?")
+                    .bind(selected_task_id)
+                    .fetch_optional(&self.db.pool)
+                    .await
+                    .ok()
+                    .flatten();
 
             if let Some(member_id) = crew_member_id {
                 if let Ok(member_uuid) = uuid::Uuid::parse_str(&member_id) {
@@ -2166,7 +2165,10 @@ impl ContainerService for LocalContainerService {
                     "openai" => Some("OPENAI_API_KEY"),
                     "google" => Some("GEMINI_API_KEY"),
                     _ => {
-                        tracing::warn!("Unknown ai_provider '{}' for crew member, skipping API key injection", provider);
+                        tracing::warn!(
+                            "Unknown ai_provider '{}' for crew member, skipping API key injection",
+                            provider
+                        );
                         None
                     }
                 };
@@ -2540,9 +2542,16 @@ async fn write_opencode_config(
     match serde_json::to_string_pretty(&config) {
         Ok(content) => {
             if let Err(e) = tokio::fs::write(&config_path, content).await {
-                tracing::warn!("Failed to write .opencode.json to {}: {}", config_path.display(), e);
+                tracing::warn!(
+                    "Failed to write .opencode.json to {}: {}",
+                    config_path.display(),
+                    e
+                );
             } else {
-                tracing::info!("Wrote per-workspace .opencode.json to {}", config_path.display());
+                tracing::info!(
+                    "Wrote per-workspace .opencode.json to {}",
+                    config_path.display()
+                );
             }
         }
         Err(e) => {
@@ -2556,9 +2565,16 @@ async fn cleanup_opencode_config(workspace_dir: &Path) {
     let config_path = workspace_dir.join(".opencode.json");
     if config_path.exists() {
         if let Err(e) = tokio::fs::remove_file(&config_path).await {
-            tracing::warn!("Failed to clean up .opencode.json at {}: {}", config_path.display(), e);
+            tracing::warn!(
+                "Failed to clean up .opencode.json at {}: {}",
+                config_path.display(),
+                e
+            );
         } else {
-            tracing::debug!("Cleaned up per-workspace .opencode.json at {}", config_path.display());
+            tracing::debug!(
+                "Cleaned up per-workspace .opencode.json at {}",
+                config_path.display()
+            );
         }
     }
 }

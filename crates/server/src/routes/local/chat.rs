@@ -239,7 +239,7 @@ The database is SQLite. Key tables:\n\n\
 **tasks** — id (BLOB/UUID), project_id (BLOB FK→projects), title (TEXT), description (TEXT), status (TEXT: todo/ready/in_progress/in_review/done/cancelled), sort_order (INT), parent_task_id (BLOB, optional FK→tasks), parent_task_sort_order (REAL), created_at, updated_at\n\
 **chat_threads** — id (TEXT), project_id (BLOB FK→projects), issue_id (TEXT), crew_member_id (BLOB FK→crew_members), title (TEXT), created_at, updated_at\n\
 **chat_messages** — id (TEXT), thread_id (TEXT FK→chat_threads), role (TEXT: user/assistant/system), content (TEXT), metadata (TEXT), created_at\n\
-**crew_members** — id (BLOB/UUID), name (TEXT), role (TEXT), avatar (TEXT), role_prompt (TEXT), tool_access (TEXT/JSON), personality (TEXT), ai_provider (TEXT), ai_model (TEXT), created_at, updated_at\n\
+**crew_members** — id (BLOB/UUID), name (TEXT), role (TEXT), avatar (TEXT), role_prompt (TEXT), tool_access (TEXT/JSON), personality (TEXT), ai_provider (TEXT), ai_model (TEXT), can_create_workspace (BOOL), can_merge_workspace (BOOL), can_propose_tasks (BOOL), can_query_database (BOOL), created_at, updated_at\n\
 **workspaces** — id (BLOB/UUID), branch (TEXT), container_ref (TEXT), created_at, updated_at\n\
 **sessions** — id (BLOB/UUID), workspace_id (BLOB FK→workspaces), executor (TEXT), created_at, updated_at\n\
 **execution_processes** — id (BLOB/UUID), session_id (BLOB FK→sessions), run_reason (TEXT), executor_action (TEXT), status (TEXT), created_at, updated_at\n\n\
@@ -315,7 +315,20 @@ async fn chat_completion(
         skills: Option<String>,
     }
 
-    let crew_row = if let Some(crew_id) = request.crew_member_id {
+    // Resolve effective crew_member_id: request param → thread's stored value
+    let effective_crew_member_id = if request.crew_member_id.is_some() {
+        request.crew_member_id
+    } else {
+        sqlx::query_scalar::<_, Option<Uuid>>(
+            "SELECT crew_member_id FROM chat_threads WHERE id = ?",
+        )
+        .bind(&request.thread_id)
+        .fetch_optional(pool)
+        .await?
+        .flatten()
+    };
+
+    let crew_row = if let Some(crew_id) = effective_crew_member_id {
         sqlx::query_as::<_, CrewMemberRow>(
             "SELECT name, role_prompt, personality, ai_provider, ai_model, skills FROM crew_members WHERE id = ?",
         )
@@ -387,19 +400,34 @@ async fn chat_completion(
         }
     };
 
-    let mut system_prompt = if let Some(ref cm) = crew_row {
+    // Only inject persona when the crew member has a non-empty role_prompt.
+    // No role_prompt = current behavior unchanged.
+    let has_persona = crew_row
+        .as_ref()
+        .map_or(false, |cm| !cm.role_prompt.trim().is_empty());
+
+    let mut system_prompt = if has_persona {
+        let cm = crew_row.as_ref().unwrap();
         let mut prompt = format!(
             "# Identity\n\
              You are \"{}\", a crew member on a software development team.\n\n\
              # Role & Expertise\n\
-             {}\n\n\
-             # Communication Style\n\
-             {}\n\n\
-             Stay in character at all times. Respond as {} would — \
+             {}\n\n",
+            cm.name, cm.role_prompt
+        );
+        if !cm.personality.trim().is_empty() {
+            prompt.push_str(&format!(
+                "# Communication Style\n\
+                 {}\n\n",
+                cm.personality
+            ));
+        }
+        prompt.push_str(&format!(
+            "Stay in character at all times. Respond as {} would — \
              use the communication style described above and bring the expertise of your role \
              to every answer.\n",
-            cm.name, cm.role_prompt, cm.personality, cm.name
-        );
+            cm.name
+        ));
         prompt.push_str(&skills_section);
         prompt.push_str("\n# Task Instructions\n");
         prompt.push_str(SYSTEM_PROMPT);
@@ -1035,6 +1063,9 @@ async fn chat_completion_provider_api(
 #[derive(Debug, Deserialize)]
 pub struct ExecuteQueryRequest {
     pub sql: String,
+    /// When a crew member executes a query (via chat), pass their id so the
+    /// server can enforce the `can_query_database` permission.
+    pub crew_member_id: Option<Uuid>,
 }
 
 #[derive(Debug, Serialize)]
@@ -1050,6 +1081,23 @@ async fn execute_readonly_query(
     State(deployment): State<DeploymentImpl>,
     Json(request): Json<ExecuteQueryRequest>,
 ) -> Result<ResponseJson<ApiResponse<QueryResult>>, ApiError> {
+    // Permission check: if a crew member is specified, they must have can_query_database
+    if let Some(member_id) = request.crew_member_id {
+        let pool = &deployment.db().pool;
+        let allowed: Option<bool> =
+            sqlx::query_scalar("SELECT can_query_database FROM crew_members WHERE id = ?")
+                .bind(member_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+        if allowed == Some(false) {
+            return Err(ApiError::Forbidden(
+                "This crew member does not have permission to query the database.".to_string(),
+            ));
+        }
+    }
+
     let sql = request.sql.trim().to_string();
 
     // Validate the query is read-only by checking the first keyword

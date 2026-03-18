@@ -86,6 +86,10 @@ pub struct WorkspaceContext {
     pub workspace: Workspace,
     pub workspace_repos: Vec<RepoWithTargetBranch>,
     pub orchestrator_session_id: Option<Uuid>,
+    /// JSON array of allowed MCP tool names from the assigned crew member.
+    /// Empty array or None means unrestricted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_access: Option<String>,
 }
 
 #[derive(Debug, Deserialize, TS)]
@@ -135,10 +139,27 @@ impl Workspace {
             .await?
             .map(|session| session.id);
 
+        // Resolve tool_access from the assigned crew member (workspace → task → crew_member)
+        let tool_access: Option<String> = if let Some(task_id) = workspace.task_id {
+            sqlx::query_scalar(
+                "SELECT cm.tool_access FROM crew_members cm \
+                 JOIN tasks t ON t.crew_member_id = cm.id \
+                 WHERE t.id = ?",
+            )
+            .bind(task_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+        } else {
+            None
+        };
+
         Ok(WorkspaceContext {
             workspace,
             workspace_repos,
             orchestrator_session_id,
+            tool_access,
         })
     }
 

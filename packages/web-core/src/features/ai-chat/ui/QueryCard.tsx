@@ -5,9 +5,10 @@ import { executeQuery } from '@/shared/lib/local/chatApi';
 
 interface QueryCardProps {
   query: QueryBlock;
+  crewMemberId?: string;
 }
 
-export function QueryCard({ query }: QueryCardProps) {
+export function QueryCard({ query, crewMemberId }: QueryCardProps) {
   const [status, setStatus] = useState<'idle' | 'running' | 'done' | 'error'>('idle');
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -16,7 +17,7 @@ export function QueryCard({ query }: QueryCardProps) {
     setStatus('running');
     setError(null);
     try {
-      const data = await executeQuery(query.sql);
+      const data = await executeQuery(query.sql, crewMemberId);
       setResult(data);
       setStatus('done');
     } catch (e) {

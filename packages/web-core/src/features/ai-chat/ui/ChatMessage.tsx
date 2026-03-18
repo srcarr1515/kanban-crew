@@ -141,16 +141,16 @@ export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
           </div>
         )}
         {proposals.map((proposal, i) => (
-          <ProposalCard key={`create-${i}`} proposal={proposal} />
+          <ProposalCard key={`create-${i}`} proposal={proposal} crewMemberId={crewMember?.id} />
         ))}
         {modifyProposals.map((proposal, i) => (
-          <ModifyProposalCard key={`modify-${i}`} proposal={proposal} />
+          <ModifyProposalCard key={`modify-${i}`} proposal={proposal} crewMemberId={crewMember?.id} />
         ))}
         {deleteProposals.map((proposal, i) => (
-          <DeleteProposalCard key={`delete-${i}`} proposal={proposal} />
+          <DeleteProposalCard key={`delete-${i}`} proposal={proposal} crewMemberId={crewMember?.id} />
         ))}
         {queryBlocks.map((query, i) => (
-          <QueryCard key={`query-${i}`} query={query} />
+          <QueryCard key={`query-${i}`} query={query} crewMemberId={crewMember?.id} />
         ))}
       </div>
     </div>
@@ -224,16 +224,16 @@ export function StreamingMessage({ content, crewMember }: StreamingMessageProps)
           {displayContent || <ResearchingIndicator crewMember={crewMember} />}
         </div>
         {proposals.map((proposal, i) => (
-          <ProposalCard key={`create-${i}`} proposal={proposal} />
+          <ProposalCard key={`create-${i}`} proposal={proposal} crewMemberId={crewMember?.id} />
         ))}
         {modifyProposals.map((proposal, i) => (
-          <ModifyProposalCard key={`modify-${i}`} proposal={proposal} />
+          <ModifyProposalCard key={`modify-${i}`} proposal={proposal} crewMemberId={crewMember?.id} />
         ))}
         {deleteProposals.map((proposal, i) => (
-          <DeleteProposalCard key={`delete-${i}`} proposal={proposal} />
+          <DeleteProposalCard key={`delete-${i}`} proposal={proposal} crewMemberId={crewMember?.id} />
         ))}
         {queryBlocks.map((query, i) => (
-          <QueryCard key={`query-${i}`} query={query} />
+          <QueryCard key={`query-${i}`} query={query} crewMemberId={crewMember?.id} />
         ))}
       </div>
     </div>

@@ -14,6 +14,30 @@ use uuid::Uuid;
 
 use crate::{DeploymentImpl, error::ApiError};
 
+/// Check that a crew member (if provided) has the `can_propose_tasks` permission.
+/// Returns `Ok(())` when no crew member is specified or the member has the permission.
+async fn check_propose_permission(
+    pool: &sqlx::SqlitePool,
+    crew_member_id: Option<Uuid>,
+) -> Result<(), ApiError> {
+    let Some(member_id) = crew_member_id else {
+        return Ok(());
+    };
+    let allowed: Option<bool> =
+        sqlx::query_scalar("SELECT can_propose_tasks FROM crew_members WHERE id = ?")
+            .bind(member_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+    if allowed == Some(false) {
+        return Err(ApiError::Forbidden(
+            "This crew member does not have permission to propose tasks.".to_string(),
+        ));
+    }
+    Ok(())
+}
+
 fn some_if_present<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
 where
     D: Deserializer<'de>,
@@ -67,6 +91,9 @@ pub struct CreateTaskRequest {
     pub parent_task_id: Option<Uuid>,
     pub parent_task_sort_order: Option<f64>,
     pub crew_member_id: Option<String>,
+    /// When a crew member is proposing this task (via chat proposal), pass their
+    /// id here so the server can enforce the `can_propose_tasks` permission.
+    pub proposing_crew_member_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +109,9 @@ pub struct UpdateTaskRequest {
     pub parent_task_sort_order: Option<Option<f64>>,
     #[serde(default, deserialize_with = "some_if_present")]
     pub crew_member_id: Option<Option<String>>,
+    /// When a crew member is modifying this task (via chat proposal), pass their
+    /// id here so the server can enforce the `can_propose_tasks` permission.
+    pub proposing_crew_member_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,6 +125,11 @@ pub struct BulkUpdateItem {
 #[derive(Debug, Deserialize)]
 pub struct BulkUpdateRequest {
     pub updates: Vec<BulkUpdateItem>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeleteTaskQuery {
+    pub proposing_crew_member_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -203,6 +238,9 @@ async fn create_task(
     Json(request): Json<CreateTaskRequest>,
 ) -> Result<ResponseJson<ApiResponse<LocalTask>>, ApiError> {
     let pool = &deployment.db().pool;
+
+    check_propose_permission(pool, request.proposing_crew_member_id).await?;
+
     let id = Uuid::new_v4();
     let status = request.status.unwrap_or_else(|| "todo".to_string());
     let sort_order = request.sort_order.unwrap_or(0);
@@ -235,6 +273,8 @@ async fn update_task(
     Json(request): Json<UpdateTaskRequest>,
 ) -> Result<ResponseJson<ApiResponse<LocalTask>>, ApiError> {
     let pool = &deployment.db().pool;
+
+    check_propose_permission(pool, request.proposing_crew_member_id).await?;
 
     // Build dynamic update — only update provided fields
     let task = sqlx::query_as::<_, LocalTask>(
@@ -274,8 +314,11 @@ async fn update_task(
 async fn delete_task(
     State(deployment): State<DeploymentImpl>,
     Path(id): Path<Uuid>,
+    Query(query): Query<DeleteTaskQuery>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let pool = &deployment.db().pool;
+
+    check_propose_permission(pool, query.proposing_crew_member_id).await?;
 
     sqlx::query("DELETE FROM tasks WHERE id = ?")
         .bind(id)

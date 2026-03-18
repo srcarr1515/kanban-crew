@@ -51,7 +51,7 @@ export function createLocalProject(name: string): Promise<LocalProject> {
 
 export function updateLocalProject(
   id: string,
-  changes: { auto_pickup_enabled?: boolean },
+  changes: { auto_pickup_enabled?: boolean }
 ): Promise<LocalProject> {
   return localFetch<LocalProject>(`/api/local/projects/${id}`, {
     method: 'PATCH',
@@ -76,6 +76,7 @@ export function createLocalTask(data: {
   parent_task_id?: string | null;
   parent_task_sort_order?: number | null;
   crew_member_id?: string | null;
+  proposing_crew_member_id?: string | null;
 }): Promise<LocalTask> {
   return localFetch<LocalTask>('/api/local/tasks', {
     method: 'POST',
@@ -93,7 +94,8 @@ export function updateLocalTask(
     parent_task_id?: string | null;
     parent_task_sort_order?: number | null;
     crew_member_id?: string | null;
-  },
+    proposing_crew_member_id?: string | null;
+  }
 ): Promise<LocalTask> {
   return localFetch<LocalTask>(`/api/local/tasks/${id}`, {
     method: 'PATCH',
@@ -101,8 +103,16 @@ export function updateLocalTask(
   });
 }
 
-export function deleteLocalTask(id: string): Promise<void> {
-  return localFetch<void>(`/api/local/tasks/${id}`, { method: 'DELETE' });
+export function deleteLocalTask(
+  id: string,
+  proposingCrewMemberId?: string
+): Promise<void> {
+  const params = proposingCrewMemberId
+    ? `?proposing_crew_member_id=${encodeURIComponent(proposingCrewMemberId)}`
+    : '';
+  return localFetch<void>(`/api/local/tasks/${id}${params}`, {
+    method: 'DELETE',
+  });
 }
 
 export interface LocalBulkUpdateItem {
@@ -129,21 +139,21 @@ export function listTaskWorkspaces(taskId: string): Promise<LocalWorkspace[]> {
 
 export function linkWorkspaceToTask(
   taskId: string,
-  workspaceId: string,
+  workspaceId: string
 ): Promise<void> {
   return localFetch<void>(
     `/api/local/tasks/${taskId}/workspaces/${workspaceId}/link`,
-    { method: 'POST' },
+    { method: 'POST' }
   );
 }
 
 export function unlinkWorkspaceFromTask(
   taskId: string,
-  workspaceId: string,
+  workspaceId: string
 ): Promise<void> {
   return localFetch<void>(
     `/api/local/tasks/${taskId}/workspaces/${workspaceId}/link`,
-    { method: 'DELETE' },
+    { method: 'DELETE' }
   );
 }
 
@@ -160,6 +170,10 @@ export interface CrewMember {
   ai_provider: string | null;
   ai_model: string | null;
   skills: string | null;
+  can_create_workspace: boolean;
+  can_merge_workspace: boolean;
+  can_propose_tasks: boolean;
+  can_query_database: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -194,6 +208,10 @@ export function updateCrewMember(
     ai_provider?: string;
     ai_model?: string;
     skills?: string[] | null;
+    can_create_workspace?: boolean;
+    can_merge_workspace?: boolean;
+    can_propose_tasks?: boolean;
+    can_query_database?: boolean;
   }
 ): Promise<CrewMember> {
   return localFetch<CrewMember>(`/api/local/crew-members/${id}`, {
@@ -225,7 +243,7 @@ export function listTaskComments(taskId: string): Promise<TaskComment[]> {
 
 export function createTaskComment(
   taskId: string,
-  data: { author_type: string; author_name: string; content: string },
+  data: { author_type: string; author_name: string; content: string }
 ): Promise<TaskComment> {
   return localFetch<TaskComment>(`/api/local/tasks/${taskId}/comments`, {
     method: 'POST',

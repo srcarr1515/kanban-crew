@@ -7,9 +7,10 @@ import { useProjectContext } from '@/shared/hooks/useProjectContext';
 
 interface ModifyProposalCardProps {
   proposal: ModifyProposal;
+  crewMemberId?: string;
 }
 
-export function ModifyProposalCard({ proposal }: ModifyProposalCardProps) {
+export function ModifyProposalCard({ proposal, crewMemberId }: ModifyProposalCardProps) {
   const { projectId } = useProjectContext();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<'idle' | 'applying' | 'done'>('idle');
@@ -22,6 +23,7 @@ export function ModifyProposalCard({ proposal }: ModifyProposalCardProps) {
         if (mod.title !== undefined) changes.title = mod.title;
         if (mod.description !== undefined) changes.description = mod.description;
         if (mod.status !== undefined) changes.status = mod.status;
+        if (crewMemberId) changes.proposing_crew_member_id = crewMemberId;
         await updateLocalTask(mod.task_id, changes as { title?: string; description?: string | null; status?: string });
       }
       await queryClient.invalidateQueries({ queryKey: ['local', 'tasks', projectId] });

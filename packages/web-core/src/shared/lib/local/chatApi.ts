@@ -279,10 +279,10 @@ export function extractQueryBlocks(content: string): QueryBlock[] {
 }
 
 /** Execute a read-only SQL query against the database. */
-export function executeQuery(sql: string): Promise<QueryResult> {
+export function executeQuery(sql: string, crewMemberId?: string): Promise<QueryResult> {
   return chatFetch<QueryResult>('/api/local/chat/query', {
     method: 'POST',
-    body: JSON.stringify({ sql }),
+    body: JSON.stringify({ sql, crew_member_id: crewMemberId ?? null }),
   });
 }
 

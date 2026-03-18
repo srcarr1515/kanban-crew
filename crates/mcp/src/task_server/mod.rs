@@ -90,16 +90,19 @@ impl McpServer {
     }
 
     pub async fn init(mut self) -> anyhow::Result<Self> {
-        let context = self.fetch_context_at_startup().await?;
+        let result = self.fetch_context_at_startup().await?;
 
-        if context.is_none() {
+        if let Some((mcp_context, tool_access_json)) = result {
+            tracing::info!("VK context loaded, get_context tool available");
+            self.context = Some(mcp_context);
+
+            // Enforce crew member tool_access: if the assigned crew member has a
+            // non-empty tool_access array, remove any tools not in the allowlist.
+            self.apply_tool_access_filter(tool_access_json.as_deref());
+        } else {
             self.tool_router.map.remove("get_context");
             tracing::debug!("VK context not available, get_context tool will not be registered");
-        } else {
-            tracing::info!("VK context loaded, get_context tool available");
         }
-
-        self.context = context;
 
         // Load MCP permission flags from environment.
         // When set, only the listed permissions are granted. When absent, all
@@ -128,19 +131,53 @@ impl McpServer {
         }
     }
 
+    /// Parses a tool_access JSON string and removes tools not in the allowlist.
+    /// An empty array or None means unrestricted (all tools allowed).
+    fn apply_tool_access_filter(&mut self, tool_access_json: Option<&str>) {
+        let allowed: Vec<String> = tool_access_json
+            .and_then(|json| serde_json::from_str::<Vec<String>>(json).ok())
+            .unwrap_or_default();
+
+        if allowed.is_empty() {
+            return;
+        }
+
+        let all_tool_names: Vec<String> =
+            self.tool_router.map.keys().map(|k| k.to_string()).collect();
+        let mut removed = Vec::new();
+        for name in &all_tool_names {
+            if !allowed.iter().any(|a| a == name) {
+                self.tool_router.map.remove(name.as_str());
+                removed.push(name.clone());
+            }
+        }
+
+        if !removed.is_empty() {
+            tracing::info!(
+                "Crew member tool_access filter applied. Allowed: {:?}. Removed: {:?}",
+                allowed,
+                removed
+            );
+        }
+    }
+
     pub fn mode(&self) -> &McpMode {
         &self.mode
     }
 
-    async fn fetch_context_at_startup(&self) -> anyhow::Result<Option<McpContext>> {
+    async fn fetch_context_at_startup(
+        &self,
+    ) -> anyhow::Result<Option<(McpContext, Option<String>)>> {
         let current_dir = std::env::current_dir().context("Failed to resolve current directory")?;
         let canonical_path = current_dir.canonicalize().unwrap_or(current_dir);
         let normalized_path = utils::path::normalize_macos_private_alias(&canonical_path);
 
         match self.try_fetch_attempt_context(&normalized_path).await {
-            Ok(Some(ctx)) => Ok(Some(
-                self.build_mcp_context_from_workspace_context(&ctx).await,
-            )),
+            Ok(Some(ctx)) => {
+                let tool_access = ctx.tool_access.clone();
+                let mcp_ctx = self.build_mcp_context_from_workspace_context(&ctx).await;
+                Ok(Some((mcp_ctx, tool_access)))
+            }
             Ok(None) | Err(_) if matches!(self.mode(), McpMode::Global) => Ok(None),
             Ok(None) => anyhow::bail!(
                 "Failed to load orchestrator MCP context from /api/containers/attempt-context"

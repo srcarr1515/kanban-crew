@@ -159,23 +159,32 @@ pub async fn create_and_start_workspace(
         }
     }
 
-    // Override executor to OpenCode if the task's crew member has an ai_provider set
+    // Look up the task's crew member to override executor and inject role_prompt
     let mut executor_config = executor_config;
+    let mut workspace_prompt = workspace_prompt;
     if let Some(linked_issue) = &linked_issue {
         let pool = &deployment.db().pool;
-        let crew_member_id: Option<String> = sqlx::query_scalar(
-            "SELECT crew_member_id FROM tasks WHERE id = ?",
-        )
-        .bind(linked_issue.issue_id)
-        .fetch_optional(pool)
-        .await
-        .ok()
-        .flatten();
+        let crew_member_id: Option<String> =
+            sqlx::query_scalar("SELECT crew_member_id FROM tasks WHERE id = ?")
+                .bind(linked_issue.issue_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
 
         if let Some(member_id) = crew_member_id {
             if let Ok(member_uuid) = Uuid::parse_str(&member_id) {
-                let ai_provider: Option<String> = sqlx::query_scalar(
-                    "SELECT ai_provider FROM crew_members WHERE id = ? AND ai_provider IS NOT NULL AND ai_provider != ''",
+                #[derive(sqlx::FromRow)]
+                struct CrewMemberInfo {
+                    name: String,
+                    role_prompt: String,
+                    personality: String,
+                    ai_provider: Option<String>,
+                    can_create_workspace: bool,
+                }
+
+                let crew_info: Option<CrewMemberInfo> = sqlx::query_as(
+                    "SELECT name, role_prompt, personality, ai_provider, can_create_workspace FROM crew_members WHERE id = ?",
                 )
                 .bind(member_uuid)
                 .fetch_optional(pool)
@@ -183,12 +192,49 @@ pub async fn create_and_start_workspace(
                 .ok()
                 .flatten();
 
-                if ai_provider.is_some() {
-                    tracing::info!(
-                        "Task {} has crew member with ai_provider, overriding executor to OPENCODE",
-                        linked_issue.issue_id
-                    );
-                    executor_config.executor = BaseCodingAgent::Opencode;
+                if let Some(cm) = crew_info {
+                    // Permission check: crew member must have can_create_workspace
+                    if !cm.can_create_workspace {
+                        return Err(ApiError::Forbidden(
+                            "This crew member does not have permission to create workspaces."
+                                .to_string(),
+                        ));
+                    }
+
+                    // Override executor to OpenCode if crew member has ai_provider set
+                    if cm.ai_provider.as_ref().is_some_and(|p| !p.is_empty()) {
+                        tracing::info!(
+                            "Task {} has crew member with ai_provider, overriding executor to OPENCODE",
+                            linked_issue.issue_id
+                        );
+                        executor_config.executor = BaseCodingAgent::Opencode;
+                    }
+
+                    // Prepend crew member persona to workspace prompt
+                    if !cm.role_prompt.trim().is_empty() {
+                        let mut persona = format!(
+                            "# Identity\n\
+                             You are \"{}\", a crew member on a software development team.\n\n\
+                             # Role & Expertise\n\
+                             {}\n\n",
+                            cm.name, cm.role_prompt
+                        );
+                        if !cm.personality.trim().is_empty() {
+                            persona.push_str(&format!(
+                                "# Communication Style\n\
+                                 {}\n\n",
+                                cm.personality
+                            ));
+                        }
+                        persona.push_str(&format!(
+                            "Stay in character at all times. Bring the expertise of your role \
+                             to every action you take.\n\n\
+                             # Task\n\
+                             {}",
+                            workspace_prompt
+                        ));
+                        workspace_prompt = persona;
+                    }
                 }
             }
         }

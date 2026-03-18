@@ -35,6 +35,7 @@ export type EditProposalResult = 'created' | 'canceled';
 interface EditProposalProps {
   proposal: Proposal;
   projectId: string;
+  crewMemberId?: string;
 }
 
 const STATUS_OPTIONS = [
@@ -44,7 +45,7 @@ const STATUS_OPTIONS = [
 ];
 
 const EditProposalDialogImpl = create<EditProposalProps>(
-  ({ proposal, projectId }) => {
+  ({ proposal, projectId, crewMemberId }) => {
     const modal = useModal();
     const queryClient = useQueryClient();
     const [tickets, setTickets] = useState<ProposalTicket[]>([]);
@@ -214,6 +215,7 @@ const EditProposalDialogImpl = create<EditProposalProps>(
             title: ticket.title.trim(),
             description: ticket.description.trim() || undefined,
             status: ticket.status || 'todo',
+            proposing_crew_member_id: crewMemberId,
           });
           const validSubs = (ticket.subtasks ?? []).filter((s) =>
             s.title.trim()
@@ -227,6 +229,7 @@ const EditProposalDialogImpl = create<EditProposalProps>(
               status: sub.status || 'todo',
               parent_task_id: parent.id,
               parent_task_sort_order: i,
+              proposing_crew_member_id: crewMemberId,
             });
           }
         }

@@ -474,6 +474,83 @@ mod tests {
     }
 
     #[test]
+    fn tool_access_filter_restricts_to_allowlist() {
+        install_rustls_provider();
+        let mut server = McpServer {
+            client: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:3000".to_string(),
+            tool_router: McpServer::global_mode_router(),
+            context: None,
+            mode: McpMode::Global,
+        };
+
+        let before = tool_names(McpServer::global_mode_router());
+        assert!(before.len() > 2, "global router should have many tools");
+
+        server.apply_tool_access_filter(Some(r#"["get_context", "list_workspaces"]"#));
+
+        let after: BTreeSet<String> = server
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        assert_eq!(
+            after,
+            BTreeSet::from(["get_context".to_string(), "list_workspaces".to_string()])
+        );
+    }
+
+    #[test]
+    fn tool_access_filter_empty_array_allows_all() {
+        install_rustls_provider();
+        let mut server = McpServer {
+            client: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:3000".to_string(),
+            tool_router: McpServer::global_mode_router(),
+            context: None,
+            mode: McpMode::Global,
+        };
+
+        let before = tool_names(McpServer::global_mode_router());
+        server.apply_tool_access_filter(Some("[]"));
+
+        let after: BTreeSet<String> = server
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        assert_eq!(after, before, "empty array should not remove any tools");
+    }
+
+    #[test]
+    fn tool_access_filter_none_allows_all() {
+        install_rustls_provider();
+        let mut server = McpServer {
+            client: reqwest::Client::new(),
+            base_url: "http://127.0.0.1:3000".to_string(),
+            tool_router: McpServer::global_mode_router(),
+            context: None,
+            mode: McpMode::Global,
+        };
+
+        let before = tool_names(McpServer::global_mode_router());
+        server.apply_tool_access_filter(None);
+
+        let after: BTreeSet<String> = server
+            .tool_router
+            .list_all()
+            .into_iter()
+            .map(|t| t.name.to_string())
+            .collect();
+
+        assert_eq!(after, before, "None should not remove any tools");
+    }
+
+    #[test]
     fn global_context_omits_orchestrator_session_id_from_serialized_output() {
         install_rustls_provider();
         let context = McpContext {

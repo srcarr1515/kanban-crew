@@ -8,9 +8,10 @@ import { EditProposalDialog } from './EditProposalDialog';
 
 interface ProposalCardProps {
   proposal: Proposal;
+  crewMemberId?: string;
 }
 
-export function ProposalCard({ proposal }: ProposalCardProps) {
+export function ProposalCard({ proposal, crewMemberId }: ProposalCardProps) {
   const { projectId } = useProjectContext();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<'idle' | 'creating' | 'done'>('idle');
@@ -28,6 +29,7 @@ export function ProposalCard({ proposal }: ProposalCardProps) {
           title: ticket.title,
           description: ticket.description,
           status: ticket.status || 'todo',
+          proposing_crew_member_id: crewMemberId,
         });
         if (ticket.subtasks && ticket.subtasks.length > 0) {
           for (let i = 0; i < ticket.subtasks.length; i++) {
@@ -39,6 +41,7 @@ export function ProposalCard({ proposal }: ProposalCardProps) {
               status: sub.status || 'todo',
               parent_task_id: parent.id,
               parent_task_sort_order: i,
+              proposing_crew_member_id: crewMemberId,
             });
           }
         }
@@ -51,7 +54,7 @@ export function ProposalCard({ proposal }: ProposalCardProps) {
   };
 
   const handleEditAndCreate = async () => {
-    const result = await EditProposalDialog.show({ proposal, projectId });
+    const result = await EditProposalDialog.show({ proposal, projectId, crewMemberId });
     if (result === 'created') {
       setStatus('done');
     }

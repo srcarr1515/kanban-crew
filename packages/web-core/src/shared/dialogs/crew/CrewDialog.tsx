@@ -63,6 +63,10 @@ type CrewMemberChanges = {
   ai_provider?: string;
   ai_model?: string;
   skills?: string[] | null;
+  can_create_workspace?: boolean;
+  can_merge_workspace?: boolean;
+  can_propose_tasks?: boolean;
+  can_query_database?: boolean;
 };
 
 const selectClasses = cn(
@@ -125,6 +129,19 @@ function CrewMemberEditForm({
     }
   });
 
+  const [canCreateWorkspace, setCanCreateWorkspace] = useState(
+    member.can_create_workspace
+  );
+  const [canMergeWorkspace, setCanMergeWorkspace] = useState(
+    member.can_merge_workspace
+  );
+  const [canProposeTasks, setCanProposeTasks] = useState(
+    member.can_propose_tasks
+  );
+  const [canQueryDatabase, setCanQueryDatabase] = useState(
+    member.can_query_database
+  );
+
   const enabledProviders = aiProviders.filter((p) => p.enabled);
 
   const handleToolToggle = (serverName: string) => {
@@ -162,6 +179,10 @@ function CrewMemberEditForm({
       ai_provider: aiProvider,
       ai_model: aiModel,
       skills,
+      can_create_workspace: canCreateWorkspace,
+      can_merge_workspace: canMergeWorkspace,
+      can_propose_tasks: canProposeTasks,
+      can_query_database: canQueryDatabase,
     });
   };
 
@@ -430,6 +451,63 @@ function CrewMemberEditForm({
             )}
           </>
         )}
+      </div>
+
+      {/* Permissions */}
+      <div>
+        <label className="block text-xs font-medium text-low mb-1">
+          Permissions
+        </label>
+        <div className="space-y-2">
+          {(
+            [
+              {
+                key: 'can_create_workspace',
+                label: 'Create workspaces',
+                description: 'Can create coding workspaces',
+                value: canCreateWorkspace,
+                onChange: setCanCreateWorkspace,
+              },
+              {
+                key: 'can_merge_workspace',
+                label: 'Merge workspaces',
+                description: 'Can merge workspace changes into the project',
+                value: canMergeWorkspace,
+                onChange: setCanMergeWorkspace,
+              },
+              {
+                key: 'can_propose_tasks',
+                label: 'Propose tasks',
+                description: 'Can propose new tasks on the board',
+                value: canProposeTasks,
+                onChange: setCanProposeTasks,
+              },
+              {
+                key: 'can_query_database',
+                label: 'Query database',
+                description: 'Can run read-only database queries',
+                value: canQueryDatabase,
+                onChange: setCanQueryDatabase,
+              },
+            ] as const
+          ).map((perm) => (
+            <label
+              key={perm.key}
+              className="flex items-start gap-2.5 cursor-pointer"
+            >
+              <input
+                type="checkbox"
+                checked={perm.value}
+                onChange={(e) => perm.onChange(e.target.checked)}
+                className="mt-0.5 accent-brand"
+              />
+              <div>
+                <span className="text-sm text-high">{perm.label}</span>
+                <p className="text-[11px] text-muted">{perm.description}</p>
+              </div>
+            </label>
+          ))}
+        </div>
       </div>
 
       {/* Save button */}
@@ -731,8 +809,7 @@ function MembersSection() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const { config } = useUserSystem();
 
-  const aiProviders: AiProviderEntry[] =
-    config?.ai_providers?.providers ?? [];
+  const aiProviders: AiProviderEntry[] = config?.ai_providers?.providers ?? [];
 
   const { data: members = [], isLoading } = useQuery({
     queryKey: CREW_MEMBERS_KEY,
@@ -772,13 +849,8 @@ function MembersSection() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({
-      id,
-      changes,
-    }: {
-      id: string;
-      changes: CrewMemberChanges;
-    }) => updateCrewMember(id, changes),
+    mutationFn: ({ id, changes }: { id: string; changes: CrewMemberChanges }) =>
+      updateCrewMember(id, changes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: CREW_MEMBERS_KEY });
       setExpandedId(null);

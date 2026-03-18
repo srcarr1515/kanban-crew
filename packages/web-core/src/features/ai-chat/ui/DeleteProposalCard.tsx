@@ -7,9 +7,10 @@ import { useProjectContext } from '@/shared/hooks/useProjectContext';
 
 interface DeleteProposalCardProps {
   proposal: DeleteProposal;
+  crewMemberId?: string;
 }
 
-export function DeleteProposalCard({ proposal }: DeleteProposalCardProps) {
+export function DeleteProposalCard({ proposal, crewMemberId }: DeleteProposalCardProps) {
   const { projectId } = useProjectContext();
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<'idle' | 'deleting' | 'done'>('idle');
@@ -18,7 +19,7 @@ export function DeleteProposalCard({ proposal }: DeleteProposalCardProps) {
     setStatus('deleting');
     try {
       for (const del of proposal.deletions) {
-        await deleteLocalTask(del.task_id);
+        await deleteLocalTask(del.task_id, crewMemberId);
       }
       await queryClient.invalidateQueries({ queryKey: ['local', 'tasks', projectId] });
       setStatus('done');

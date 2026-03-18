@@ -184,6 +184,37 @@ pub async fn merge_workspace(
 ) -> Result<ResponseJson<ApiResponse<(), GitOperationError>>, ApiError> {
     let pool = &deployment.db().pool;
 
+    // Permission check: if workspace is linked to a task with a crew member,
+    // that crew member must have can_merge_workspace permission.
+    if let Some(task_id) = workspace.task_id {
+        let crew_member_id: Option<String> =
+            sqlx::query_scalar("SELECT crew_member_id FROM tasks WHERE id = ?")
+                .bind(task_id)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+
+        if let Some(ref member_id) = crew_member_id {
+            if let Ok(member_uuid) = Uuid::parse_str(member_id) {
+                let can_merge: Option<bool> =
+                    sqlx::query_scalar("SELECT can_merge_workspace FROM crew_members WHERE id = ?")
+                        .bind(member_uuid)
+                        .fetch_optional(pool)
+                        .await
+                        .ok()
+                        .flatten();
+
+                if can_merge == Some(false) {
+                    return Err(ApiError::Forbidden(
+                        "This crew member does not have permission to merge workspaces."
+                            .to_string(),
+                    ));
+                }
+            }
+        }
+    }
+
     let workspace_repo =
         WorkspaceRepo::find_by_workspace_and_repo_id(pool, workspace.id, request.repo_id)
             .await?
@@ -395,10 +426,7 @@ pub async fn merge_workspace(
     }
 
     // Clean up the worktree directory immediately instead of waiting for periodic cleanup
-    deployment
-        .container()
-        .cleanup_workspace(&workspace)
-        .await;
+    deployment.container().cleanup_workspace(&workspace).await;
 
     deployment
         .track_if_analytics_allowed(
