@@ -23,6 +23,7 @@ export interface ChatThread {
   id: string;
   project_id: string;
   issue_id: string | null;
+  crew_member_id: string | null;
   title: string;
   created_at: string;
   updated_at: string;
@@ -41,10 +42,16 @@ export interface ProposalTicket {
   title: string;
   description: string;
   status: string;
+  subtasks?: ProposalTicket[];
 }
 
 export interface Proposal {
   tickets: ProposalTicket[];
+}
+
+export interface ChatAttachment {
+  base64: string;
+  mime_type: string;
 }
 
 // ── Threads ─────────────────────────────────────────────────────────────────
@@ -59,6 +66,7 @@ export function createChatThread(data: {
   project_id: string;
   issue_id?: string | null;
   title?: string;
+  crew_member_id?: string | null;
 }): Promise<ChatThread> {
   return chatFetch<ChatThread>('/api/local/chat/threads', {
     method: 'POST',
@@ -98,10 +106,12 @@ export function listChatMessages(threadId: string): Promise<ChatMessage[]> {
 export async function* streamChatCompletion(
   threadId: string,
   content: string,
-  crewMemberId?: string | null
+  crewMemberId?: string | null,
+  attachments?: ChatAttachment[]
 ): AsyncGenerator<string, void, unknown> {
-  const body: Record<string, string> = { thread_id: threadId, content };
+  const body: Record<string, unknown> = { thread_id: threadId, content };
   if (crewMemberId) body.crew_member_id = crewMemberId;
+  if (attachments && attachments.length > 0) body.images = attachments;
 
   const res = await makeLocalApiRequest('/api/local/chat/completions', {
     method: 'POST',
@@ -147,18 +157,37 @@ export async function* streamChatCompletion(
 
 const PROPOSAL_REGEX = /```proposal\n([\s\S]*?)\n```/g;
 
-/** Extract proposal blocks from an assistant message. */
+/** Normalize a raw parsed object into a ProposalTicket, returning null if invalid. */
+function normalizeTicket(raw: unknown): ProposalTicket | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const t = raw as Record<string, unknown>;
+  if (typeof t.title !== 'string' || !t.title.trim()) return null;
+  return {
+    title: t.title.trim(),
+    description: typeof t.description === 'string' ? t.description : '',
+    status: typeof t.status === 'string' ? t.status : 'todo',
+    subtasks: Array.isArray(t.subtasks)
+      ? (t.subtasks.map(normalizeTicket).filter(Boolean) as ProposalTicket[])
+      : undefined,
+  };
+}
+
+/** Extract and normalize proposal blocks from an assistant message. */
 export function extractProposals(content: string): Proposal[] {
   const proposals: Proposal[] = [];
   let match;
   while ((match = PROPOSAL_REGEX.exec(content)) !== null) {
     try {
       const parsed = JSON.parse(match[1]);
-      if (Array.isArray(parsed.tickets)) {
-        proposals.push(parsed);
+      if (!Array.isArray(parsed.tickets)) continue;
+      const tickets = parsed.tickets
+        .map(normalizeTicket)
+        .filter(Boolean) as ProposalTicket[];
+      if (tickets.length > 0) {
+        proposals.push({ tickets });
       }
     } catch {
-      // malformed proposal, skip
+      // malformed JSON, skip
     }
   }
   return proposals;

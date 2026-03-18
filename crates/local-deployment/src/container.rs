@@ -681,10 +681,14 @@ impl LocalContainerService {
         .ok()
         .flatten();
 
-        let (prompt_task_title, prompt_task_description, prompt_prefix) =
-            if let Some((sub_id, sub_title, sub_desc)) = first_subtask {
-                // Claim the sub-task atomically
-                let claimed = sqlx::query(
+        let (prompt_task_title, prompt_task_description, prompt_prefix) = if let Some((
+            sub_id,
+            sub_title,
+            sub_desc,
+        )) = first_subtask
+        {
+            // Claim the sub-task atomically
+            let claimed = sqlx::query(
                     "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now', 'subsec') WHERE id = ? AND status = 'ready'",
                 )
                 .bind(sub_id)
@@ -693,28 +697,40 @@ impl LocalContainerService {
                 .map(|r| r.rows_affected() > 0)
                 .unwrap_or(false);
 
-                if claimed {
-                    // Re-link workspace to the sub-task
-                    if let Err(e) = Workspace::link_to_task(&self.db.pool, workspace_id, sub_id).await {
-                        tracing::warn!("Auto-pickup: failed to re-link workspace to sub-task: {e}");
-                        // Fall through to use parent task prompt
-                        (selected_task_title.clone(), task_description.clone(), "Implement the following task:")
-                    } else {
-                        tracing::info!(
-                            "Auto-pickup: parent task \"{}\" has sub-tasks, starting with \"{}\"",
-                            selected_task_title,
-                            sub_title,
-                        );
-                        (sub_title, sub_desc, "Implement the following task:")
-                    }
+            if claimed {
+                // Re-link workspace to the sub-task
+                if let Err(e) = Workspace::link_to_task(&self.db.pool, workspace_id, sub_id).await {
+                    tracing::warn!("Auto-pickup: failed to re-link workspace to sub-task: {e}");
+                    // Fall through to use parent task prompt
+                    (
+                        selected_task_title.clone(),
+                        task_description.clone(),
+                        "Implement the following task:",
+                    )
                 } else {
-                    // Another agent claimed it, fall through to parent
-                    (selected_task_title.clone(), task_description.clone(), "Implement the following task:")
+                    tracing::info!(
+                        "Auto-pickup: parent task \"{}\" has sub-tasks, starting with \"{}\"",
+                        selected_task_title,
+                        sub_title,
+                    );
+                    (sub_title, sub_desc, "Implement the following task:")
                 }
             } else {
-                // No sub-tasks — regular standalone task
-                (selected_task_title.clone(), task_description.clone(), "Implement the following task:")
-            };
+                // Another agent claimed it, fall through to parent
+                (
+                    selected_task_title.clone(),
+                    task_description.clone(),
+                    "Implement the following task:",
+                )
+            }
+        } else {
+            // No sub-tasks — regular standalone task
+            (
+                selected_task_title.clone(),
+                task_description.clone(),
+                "Implement the following task:",
+            )
+        };
 
         // Build prompt from the task
         let prompt = format!(

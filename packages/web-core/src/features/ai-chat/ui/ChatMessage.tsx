@@ -2,13 +2,27 @@ import { useEffect, useMemo, useState } from 'react';
 import { RobotIcon, UserIcon } from '@phosphor-icons/react';
 import type { ChatMessage as ChatMessageType } from '@/shared/lib/local/chatApi';
 import { extractProposals } from '@/shared/lib/local/chatApi';
+import type { CrewMember } from '@/shared/lib/local/localApi';
 import { ProposalCard } from './ProposalCard';
 
 interface ChatMessageProps {
   message: ChatMessageType;
+  crewMember?: CrewMember | null;
 }
 
-export function ChatMessageBubble({ message }: ChatMessageProps) {
+function AssistantAvatar({ crewMember }: { crewMember?: CrewMember | null }) {
+  if (!crewMember) {
+    return <RobotIcon className="size-4" weight="fill" />;
+  }
+  const isImage =
+    crewMember.avatar?.startsWith('data:') || crewMember.avatar?.startsWith('http');
+  if (isImage) {
+    return <img src={crewMember.avatar} alt={crewMember.name} className="w-full h-full object-cover" />;
+  }
+  return <>{crewMember.avatar || crewMember.name.charAt(0).toUpperCase()}</>;
+}
+
+export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
   const isUser = message.role === 'user';
   const proposals = useMemo(
     () => (message.role === 'assistant' ? extractProposals(message.content) : []),
@@ -26,14 +40,18 @@ export function ChatMessageBubble({ message }: ChatMessageProps) {
   return (
     <div className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
       <div
-        className={`shrink-0 flex items-center justify-center size-7 rounded-full ${
-          isUser ? 'bg-brand/15 text-brand' : 'bg-panel text-low'
+        className={`shrink-0 flex items-center justify-center size-7 rounded-full overflow-hidden text-[10px] font-medium ${
+          isUser
+            ? 'bg-brand/15 text-brand'
+            : crewMember
+              ? 'bg-brand/20 text-brand'
+              : 'bg-panel text-low'
         }`}
       >
         {isUser ? (
           <UserIcon className="size-4" weight="fill" />
         ) : (
-          <RobotIcon className="size-4" weight="fill" />
+          <AssistantAvatar crewMember={crewMember} />
         )}
       </div>
       <div className={`min-w-0 max-w-[85%] space-y-1 ${isUser ? 'items-end' : ''}`}>
@@ -54,9 +72,9 @@ export function ChatMessageBubble({ message }: ChatMessageProps) {
   );
 }
 
-const RESEARCH_PHASES = ['Thinking', 'Researching', 'Analyzing'] as const;
+const RESEARCH_PHASES = ['thinking', 'researching', 'analyzing'] as const;
 
-function ResearchingIndicator() {
+function ResearchingIndicator({ crewMember }: { crewMember?: CrewMember | null }) {
   const [phase, setPhase] = useState(0);
 
   useEffect(() => {
@@ -66,8 +84,12 @@ function ResearchingIndicator() {
     return () => clearInterval(interval);
   }, []);
 
+  const label = crewMember
+    ? `${crewMember.name} is ${RESEARCH_PHASES[phase]}…`
+    : `${RESEARCH_PHASES[phase].charAt(0).toUpperCase()}${RESEARCH_PHASES[phase].slice(1)}`;
+
   return (
-    <span className="inline-flex items-center gap-2 text-low">
+    <span className="inline-flex items-center gap-2 text-brand/70">
       <span className="inline-flex gap-0.5 items-center">
         <span
           className="size-1.5 rounded-full bg-current animate-bounce"
@@ -82,16 +104,17 @@ function ResearchingIndicator() {
           style={{ animationDelay: '300ms', animationDuration: '1s' }}
         />
       </span>
-      <span className="transition-opacity duration-300">{RESEARCH_PHASES[phase]}</span>
+      <span className="transition-opacity duration-300 font-medium">{label}</span>
     </span>
   );
 }
 
 interface StreamingMessageProps {
   content: string;
+  crewMember?: CrewMember | null;
 }
 
-export function StreamingMessage({ content }: StreamingMessageProps) {
+export function StreamingMessage({ content, crewMember }: StreamingMessageProps) {
   const proposals = useMemo(() => extractProposals(content), [content]);
   const displayContent = useMemo(() => {
     if (proposals.length === 0) return content;
@@ -100,12 +123,16 @@ export function StreamingMessage({ content }: StreamingMessageProps) {
 
   return (
     <div className="flex gap-2.5">
-      <div className="shrink-0 flex items-center justify-center size-7 rounded-full bg-panel text-low">
-        <RobotIcon className="size-4" weight="fill" />
+      <div
+        className={`shrink-0 flex items-center justify-center size-7 rounded-full overflow-hidden text-[10px] font-medium ${
+          crewMember ? 'bg-brand/20 text-brand' : 'bg-panel text-low'
+        }`}
+      >
+        <AssistantAvatar crewMember={crewMember} />
       </div>
       <div className="min-w-0 max-w-[85%] space-y-1">
         <div className="rounded-xl rounded-tl-sm px-3 py-2 text-sm whitespace-pre-wrap break-words bg-panel text-high">
-          {displayContent || <ResearchingIndicator />}
+          {displayContent || <ResearchingIndicator crewMember={crewMember} />}
         </div>
         {proposals.map((proposal, i) => (
           <ProposalCard key={i} proposal={proposal} />

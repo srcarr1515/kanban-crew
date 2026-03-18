@@ -24,6 +24,7 @@ pub struct ChatThread {
     pub id: String,
     pub project_id: Uuid,
     pub issue_id: Option<String>,
+    pub crew_member_id: Option<String>,
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -51,11 +52,13 @@ pub struct CreateThreadRequest {
     pub project_id: Uuid,
     pub issue_id: Option<String>,
     pub title: Option<String>,
+    pub crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateThreadRequest {
     pub title: Option<String>,
+    pub crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -64,10 +67,17 @@ pub struct ListMessagesQuery {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ImageAttachment {
+    pub base64: String,
+    pub mime_type: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SendMessageRequest {
     pub thread_id: String,
     pub content: String,
     pub crew_member_id: Option<String>,
+    pub images: Option<Vec<ImageAttachment>>,
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
@@ -91,7 +101,7 @@ async fn list_threads(
     let pool = &deployment.db().pool;
 
     let threads = sqlx::query_as::<_, ChatThread>(
-        "SELECT id, project_id, issue_id, title, created_at, updated_at
+        "SELECT id, project_id, issue_id, crew_member_id, title, created_at, updated_at
          FROM chat_threads WHERE project_id = ? ORDER BY updated_at DESC",
     )
     .bind(&query.project_id)
@@ -110,13 +120,14 @@ async fn create_thread(
     let title = request.title.unwrap_or_else(|| "New Chat".to_string());
 
     let thread = sqlx::query_as::<_, ChatThread>(
-        "INSERT INTO chat_threads (id, project_id, issue_id, title)
-         VALUES (?, ?, ?, ?)
-         RETURNING id, project_id, issue_id, title, created_at, updated_at",
+        "INSERT INTO chat_threads (id, project_id, issue_id, crew_member_id, title)
+         VALUES (?, ?, ?, ?, ?)
+         RETURNING id, project_id, issue_id, crew_member_id, title, created_at, updated_at",
     )
     .bind(&id)
     .bind(&request.project_id)
     .bind(&request.issue_id)
+    .bind(&request.crew_member_id)
     .bind(&title)
     .fetch_one(pool)
     .await?;
@@ -147,11 +158,14 @@ async fn update_thread_title(
 
     let thread = sqlx::query_as::<_, ChatThread>(
         "UPDATE chat_threads
-         SET title = COALESCE(?, title), updated_at = datetime('now', 'subsec')
+         SET title = COALESCE(?, title),
+             crew_member_id = COALESCE(?, crew_member_id),
+             updated_at = datetime('now', 'subsec')
          WHERE id = ?
-         RETURNING id, project_id, issue_id, title, created_at, updated_at",
+         RETURNING id, project_id, issue_id, crew_member_id, title, created_at, updated_at",
     )
     .bind(&request.title)
+    .bind(&request.crew_member_id)
     .bind(&id)
     .fetch_optional(pool)
     .await?
@@ -186,10 +200,15 @@ You are a helpful project planning assistant embedded in a Kanban board app. \
 Help the user brainstorm features, discuss implementation strategies, and break work into tasks.\n\n\
 When the user asks you to create tickets or plan work, respond with a structured proposal using this EXACT JSON format embedded in your response:\n\n\
 ```proposal\n\
-{\"tickets\": [{\"title\": \"Ticket title\", \"description\": \"What to do\", \"status\": \"todo\"}]}\n\
+{\"tickets\": [{\"title\": \"Parent task\", \"description\": \"What to do\", \"status\": \"todo\", \"subtasks\": [{\"title\": \"Child step\", \"description\": \"Sub-step detail\", \"status\": \"todo\"}]}]}\n\
 ```\n\n\
 Always include a proposal block when suggesting concrete tasks. The user will see a confirmation card and can choose to create the tickets. \
-Keep ticket titles concise and descriptions actionable. Use status \"todo\" for new work.";
+Keep ticket titles concise and descriptions actionable. Use status \"todo\" for new work.\n\n\
+Grouping rules:\n\
+- Use separate top-level tickets for distinct, unrelated work items.\n\
+- Use subtasks when a ticket has implementation steps that belong together as a batch (e.g. backend + frontend for the same feature, or setup + implementation + tests for one piece of work).\n\
+- Omit the subtasks field entirely for simple, self-contained tickets.\n\
+- Subtasks should not have their own subtasks — keep the hierarchy to one level deep.";
 
 // ── AI completion (streaming) ───────────────────────────────────────────────
 
@@ -210,11 +229,17 @@ async fn chat_completion(
     .execute(pool)
     .await?;
 
-    // Touch thread updated_at
-    sqlx::query("UPDATE chat_threads SET updated_at = datetime('now', 'subsec') WHERE id = ?")
-        .bind(&request.thread_id)
-        .execute(pool)
-        .await?;
+    // Touch thread updated_at and lock crew_member_id on first message if provided
+    sqlx::query(
+        "UPDATE chat_threads
+         SET crew_member_id = COALESCE(crew_member_id, ?),
+             updated_at = datetime('now', 'subsec')
+         WHERE id = ?",
+    )
+    .bind(&request.crew_member_id)
+    .bind(&request.thread_id)
+    .execute(pool)
+    .await?;
 
     // 2. Load conversation history for this thread
     let history = sqlx::query_as::<_, ChatMessage>(
@@ -229,12 +254,11 @@ async fn chat_completion(
     let system_prompt = if let Some(ref crew_id) = request.crew_member_id {
         let crew_uuid = Uuid::parse_str(crew_id)
             .map_err(|_| ApiError::BadRequest(format!("Invalid crew member ID: {crew_id}")))?;
-        let crew_member: Option<(String, String, String)> = sqlx::query_as(
-            "SELECT name, role_prompt, personality FROM crew_members WHERE id = ?",
-        )
-        .bind(crew_uuid)
-        .fetch_optional(pool)
-        .await?;
+        let crew_member: Option<(String, String, String)> =
+            sqlx::query_as("SELECT name, role_prompt, personality FROM crew_members WHERE id = ?")
+                .bind(crew_uuid)
+                .fetch_optional(pool)
+                .await?;
 
         if let Some((name, role_prompt, personality)) = crew_member {
             let mut prompt = format!(
@@ -261,10 +285,13 @@ async fn chat_completion(
     // 4. Decide backend: prefer Claude CLI, fall back to Anthropic API
     let use_cli = std::env::var("CHAT_BACKEND").unwrap_or_default() != "anthropic-api";
 
+    let images = request.images.as_deref();
+
     if use_cli {
-        chat_completion_cli(pool, &request.thread_id, &history, &system_prompt).await
+        chat_completion_cli(pool, &request.thread_id, &history, &system_prompt, images).await
     } else {
-        chat_completion_anthropic_api(pool, &request.thread_id, &history, &system_prompt).await
+        chat_completion_anthropic_api(pool, &request.thread_id, &history, &system_prompt, images)
+            .await
     }
 }
 
@@ -275,6 +302,7 @@ async fn chat_completion_cli(
     thread_id: &str,
     history: &[ChatMessage],
     system_prompt: &str,
+    images: Option<&[ImageAttachment]>,
 ) -> Result<Response<Body>, ApiError> {
     use std::process::Stdio;
 
@@ -309,13 +337,26 @@ async fn chat_completion_cli(
         prompt.push_str("\n\n");
     }
     prompt.push_str("--- Conversation History ---\n");
-    for msg in history {
+    let history_len = history.len();
+    for (i, msg) in history.iter().enumerate() {
         let role_label = match msg.role.as_str() {
             "user" => "User",
             "assistant" => "Assistant",
             _ => continue,
         };
-        prompt.push_str(&format!("\n{role_label}: {}\n", msg.content));
+        // For the last user message, note any attached images (CLI has no vision support)
+        let suffix = if i + 1 == history_len
+            && msg.role == "user"
+            && images.map(|imgs| !imgs.is_empty()).unwrap_or(false)
+        {
+            format!(
+                " [+{} image(s) attached]",
+                images.map(|imgs| imgs.len()).unwrap_or(0)
+            )
+        } else {
+            String::new()
+        };
+        prompt.push_str(&format!("\n{role_label}: {}{suffix}\n", msg.content));
     }
     prompt.push_str("\nAssistant: ");
 
@@ -466,19 +507,45 @@ async fn chat_completion_anthropic_api(
     thread_id: &str,
     history: &[ChatMessage],
     system_prompt: &str,
+    images: Option<&[ImageAttachment]>,
 ) -> Result<Response<Body>, ApiError> {
     let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
         ApiError::BadRequest("ANTHROPIC_API_KEY environment variable is not set".to_string())
     })?;
 
-    let messages: Vec<serde_json::Value> = history
+    // For the last user message, build multipart content if images are attached
+    let non_system: Vec<&ChatMessage> =
+        history.iter().filter(|m| m.role != "system").collect();
+    let last_idx = non_system.len().saturating_sub(1);
+
+    let messages: Vec<serde_json::Value> = non_system
         .iter()
-        .filter(|m| m.role != "system")
-        .map(|m| {
-            serde_json::json!({
-                "role": m.role,
-                "content": m.content,
-            })
+        .enumerate()
+        .map(|(i, m)| {
+            let content = if i == last_idx
+                && m.role == "user"
+                && images.map(|imgs| !imgs.is_empty()).unwrap_or(false)
+            {
+                let imgs = images.unwrap();
+                let mut blocks: Vec<serde_json::Value> = imgs
+                    .iter()
+                    .map(|img| {
+                        serde_json::json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": img.mime_type,
+                                "data": img.base64,
+                            }
+                        })
+                    })
+                    .collect();
+                blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+                serde_json::json!(blocks)
+            } else {
+                serde_json::json!(m.content)
+            };
+            serde_json::json!({"role": m.role, "content": content})
         })
         .collect();
 

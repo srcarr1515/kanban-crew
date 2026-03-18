@@ -8,8 +8,11 @@ import {
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
   CaretDownIcon,
+  CircleNotchIcon,
+  PaperclipIcon,
   PaperPlaneRightIcon,
   PlusIcon,
+  StopIcon,
   TrashIcon,
   UserCircleIcon,
   XIcon,
@@ -22,6 +25,8 @@ import {
   deleteChatThread,
   listChatMessages,
   streamChatCompletion,
+  updateChatThreadTitle,
+  type ChatAttachment,
   type ChatThread,
 } from '@/shared/lib/local/chatApi';
 import {
@@ -41,8 +46,11 @@ export function ChatPanel() {
   const [optimisticText, setOptimisticText] = useState<string | null>(null);
   const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
   const [showCrewPicker, setShowCrewPicker] = useState(false);
+  const [attachments, setAttachments] = useState<Array<{ id: string; dataUrl: string; mimeType: string; name: string }>>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef(false);
   const crewPickerRef = useRef<HTMLDivElement>(null);
 
@@ -77,6 +85,48 @@ export function ChatPanel() {
   useEffect(() => {
     inputRef.current?.focus();
   }, [activeThreadId]);
+
+  // Restore crew member selection from locked thread when switching threads
+  useEffect(() => {
+    const activeThread = threads.find((t) => t.id === activeThreadId);
+    setSelectedCrewId(activeThread?.crew_member_id ?? null);
+  }, [activeThreadId, threads]);
+
+  // ── File attachments ─────────────────────────────────────────────
+  const processFiles = useCallback((files: File[]) => {
+    const imageFiles = files.filter((f) => f.type.startsWith('image/'));
+    for (const file of imageFiles) {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const dataUrl = e.target?.result as string;
+        setAttachments((prev) => [
+          ...prev,
+          { id: crypto.randomUUID(), dataUrl, mimeType: file.type, name: file.name },
+        ]);
+      };
+      reader.readAsDataURL(file);
+    }
+  }, []);
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    if (!e.currentTarget.contains(e.relatedTarget as Node)) {
+      setIsDragOver(false);
+    }
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      setIsDragOver(false);
+      processFiles(Array.from(e.dataTransfer.files));
+    },
+    [processFiles]
+  );
 
   // ── Create thread ────────────────────────────────────────────────
   const handleNewThread = useCallback(async () => {
@@ -126,17 +176,27 @@ export function ChatPanel() {
   // ── Send message ─────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || !activeThreadId || isStreaming) return;
+    if ((!text && attachments.length === 0) || !activeThreadId || isStreaming) return;
+
+    const chatAttachments: ChatAttachment[] = attachments.map((a) => ({
+      base64: a.dataUrl.split(',')[1],
+      mime_type: a.mimeType,
+    }));
 
     setInput('');
-    setOptimisticText(text);
+    setAttachments([]);
+    setOptimisticText(text || '\u200b'); // zero-width space keeps bubble visible
     setIsStreaming(true);
     setStreamingContent('');
     abortRef.current = false;
 
+    // Check before streaming so we capture the pre-send state
+    const activeThread = threads.find((t) => t.id === activeThreadId);
+    const isFirstMessage = activeThread?.title === 'New Chat';
+
     try {
       let accumulated = '';
-      for await (const chunk of streamChatCompletion(activeThreadId, text, selectedCrewId)) {
+      for await (const chunk of streamChatCompletion(activeThreadId, text || ' ', selectedCrewId, chatAttachments)) {
         if (abortRef.current) break;
         accumulated += chunk;
         setStreamingContent(accumulated);
@@ -151,8 +211,24 @@ export function ChatPanel() {
       await queryClient.invalidateQueries({
         queryKey: ['chat-messages', activeThreadId],
       });
+      // Auto-rename thread on first message
+      if (isFirstMessage) {
+        let newTitle: string;
+        if (selectedCrewId) {
+          const crew = crewMembers.find((m) => m.id === selectedCrewId);
+          newTitle = crew ? `Chat with ${crew.name}` : text.slice(0, 50).trim();
+        } else {
+          newTitle = text.slice(0, 50).trim();
+        }
+        try {
+          await updateChatThreadTitle(activeThreadId, newTitle);
+          await queryClient.invalidateQueries({ queryKey: ['chat-threads', projectId] });
+        } catch {
+          // Non-critical, ignore rename failure
+        }
+      }
     }
-  }, [input, activeThreadId, isStreaming, selectedCrewId, queryClient]);
+  }, [input, attachments, activeThreadId, isStreaming, selectedCrewId, queryClient, threads, crewMembers, projectId]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -164,8 +240,27 @@ export function ChatPanel() {
     [handleSend]
   );
 
+  const activeThread = threads.find((t) => t.id === activeThreadId);
+  const isCrewLocked = !!activeThread?.crew_member_id;
+  const lockedCrewMember = isCrewLocked
+    ? (crewMembers.find((m) => m.id === selectedCrewId) ?? null)
+    : null;
+
   return (
-    <div className="flex flex-col h-full bg-primary">
+    <div
+      className="relative flex flex-col h-full bg-primary"
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center border-2 border-dashed border-brand bg-primary/90 backdrop-blur-sm pointer-events-none">
+          <div className="text-center">
+            <PaperclipIcon className="size-8 text-brand mx-auto mb-2" weight="bold" />
+            <p className="text-sm font-medium text-high">Drop images here</p>
+          </div>
+        </div>
+      )}
       {/* Header with thread tabs */}
       <div className="shrink-0 border-b flex items-center gap-0 overflow-hidden">
         <div className="flex-1 flex items-center gap-0 overflow-x-auto min-w-0 scrollbar-none">
@@ -217,7 +312,7 @@ export function ChatPanel() {
           </div>
         )}
         {messages.map((msg) => (
-          <ChatMessageBubble key={msg.id} message={msg} />
+          <ChatMessageBubble key={msg.id} message={msg} crewMember={lockedCrewMember} />
         ))}
         {optimisticText && (
           <ChatMessageBubble
@@ -231,23 +326,94 @@ export function ChatPanel() {
             }}
           />
         )}
-        {isStreaming && <StreamingMessage content={streamingContent} />}
+        {isStreaming && <StreamingMessage content={streamingContent} crewMember={lockedCrewMember} />}
         <div ref={messagesEndRef} />
       </div>
 
+      {/* Streaming status bar — always visible above the input regardless of scroll */}
+      {isStreaming && (
+        <div className="shrink-0 border-t border-brand/30 bg-brand/5 px-3 py-1.5 flex items-center gap-2 text-xs">
+          <span className="inline-flex gap-0.5 shrink-0">
+            <span
+              className="size-1.5 rounded-full bg-brand animate-bounce"
+              style={{ animationDelay: '0ms', animationDuration: '1s' }}
+            />
+            <span
+              className="size-1.5 rounded-full bg-brand animate-bounce"
+              style={{ animationDelay: '150ms', animationDuration: '1s' }}
+            />
+            <span
+              className="size-1.5 rounded-full bg-brand animate-bounce"
+              style={{ animationDelay: '300ms', animationDuration: '1s' }}
+            />
+          </span>
+          <span className="text-brand/80 font-medium">
+            {lockedCrewMember ? `${lockedCrewMember.name} is thinking…` : 'Thinking…'}
+          </span>
+        </div>
+      )}
+
       {/* Input area */}
       <div className="shrink-0 border-t p-2 space-y-2">
-        {/* Crew member picker */}
-        <CrewMemberPicker
-          crewMembers={crewMembers}
-          selectedCrewId={selectedCrewId}
-          onSelect={setSelectedCrewId}
-          showPicker={showCrewPicker}
-          setShowPicker={setShowCrewPicker}
-          pickerRef={crewPickerRef}
-        />
+        {/* Crew member picker / locked badge */}
+        {isCrewLocked ? (
+          <LockedCrewBadge crewMember={lockedCrewMember} />
+        ) : (
+          <CrewMemberPicker
+            crewMembers={crewMembers}
+            selectedCrewId={selectedCrewId}
+            onSelect={setSelectedCrewId}
+            showPicker={showCrewPicker}
+            setShowPicker={setShowCrewPicker}
+            pickerRef={crewPickerRef}
+          />
+        )}
+
+        {/* Attachment thumbnails */}
+        {attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 px-1">
+            {attachments.map((att) => (
+              <div key={att.id} className="relative group">
+                <img
+                  src={att.dataUrl}
+                  alt={att.name}
+                  className="h-16 w-16 object-cover rounded-md border border-border"
+                />
+                <button
+                  type="button"
+                  onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                  className="absolute -top-1 -right-1 size-4 rounded-full bg-panel border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                  title="Remove"
+                >
+                  <XIcon className="size-2.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="flex items-end gap-2">
+          {/* Hidden file input */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/*"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              processFiles(Array.from(e.target.files ?? []));
+              e.target.value = '';
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!activeThreadId || isStreaming}
+            className="shrink-0 p-2 text-low hover:text-normal hover:bg-secondary rounded-lg transition-colors disabled:opacity-40"
+            title="Attach image"
+          >
+            <PaperclipIcon className="size-4" />
+          </button>
           <textarea
             ref={inputRef}
             value={input}
@@ -260,12 +426,23 @@ export function ChatPanel() {
           />
           <button
             type="button"
-            onClick={handleSend}
-            disabled={!input.trim() || !activeThreadId || isStreaming}
-            className="shrink-0 rounded-lg bg-brand p-2 text-white hover:bg-brand/90 transition-colors disabled:opacity-40"
-            title="Send"
+            onClick={isStreaming ? () => { abortRef.current = true; } : handleSend}
+            disabled={!isStreaming && ((!input.trim() && attachments.length === 0) || !activeThreadId)}
+            className={`shrink-0 rounded-lg p-2 text-white transition-colors ${
+              isStreaming
+                ? 'bg-brand hover:bg-red-500'
+                : 'bg-brand hover:bg-brand/90 disabled:opacity-40'
+            }`}
+            title={isStreaming ? 'Stop generating' : 'Send'}
           >
-            <PaperPlaneRightIcon className="size-4" weight="fill" />
+            {isStreaming ? (
+              <span className="relative flex size-4 items-center justify-center">
+                <CircleNotchIcon className="size-4 animate-spin" weight="bold" />
+                <StopIcon className="absolute size-2" weight="fill" />
+              </span>
+            ) : (
+              <PaperPlaneRightIcon className="size-4" weight="fill" />
+            )}
           </button>
         </div>
       </div>
@@ -305,6 +482,34 @@ function ThreadTab({
         <TrashIcon className="size-3" />
       </span>
     </button>
+  );
+}
+
+function LockedCrewBadge({ crewMember }: { crewMember: CrewMember | null }) {
+  const isImageAvatar = (avatar?: string) =>
+    avatar?.startsWith('data:') || avatar?.startsWith('http');
+
+  return (
+    <div className="flex items-center gap-2 px-2 py-1 rounded-md text-xs text-low">
+      {crewMember ? (
+        <>
+          <div className="flex items-center justify-center w-5 h-5 rounded-full overflow-hidden bg-brand/20 text-brand text-[10px] font-medium shrink-0">
+            {isImageAvatar(crewMember.avatar) ? (
+              <img src={crewMember.avatar} alt={crewMember.name} className="w-full h-full object-cover" />
+            ) : (
+              crewMember.avatar || crewMember.name.charAt(0).toUpperCase()
+            )}
+          </div>
+          <span className="font-medium text-normal">{crewMember.name}</span>
+          <span className="text-low">· locked</span>
+        </>
+      ) : (
+        <>
+          <UserCircleIcon className="size-4" weight="bold" />
+          <span>Default AI · locked</span>
+        </>
+      )}
+    </div>
   );
 }
 

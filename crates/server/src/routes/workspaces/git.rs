@@ -224,24 +224,30 @@ pub async fn merge_workspace(
     if let Err(e) = deployment.git().abort_conflicts(&worktree_path) {
         tracing::warn!(
             "merge_workspace: failed to abort stale conflicts in '{}': {}",
-            repo.name, e
+            repo.name,
+            e
         );
     }
 
     // Failsafe: auto-commit any uncommitted changes before merging.
     // This prevents merge/rebase failures when the agent left uncommitted work.
-    match deployment.git().commit(&worktree_path, "wip: uncommitted changes before merge") {
+    match deployment
+        .git()
+        .commit(&worktree_path, "wip: uncommitted changes before merge")
+    {
         Ok(true) => {
             tracing::info!(
                 "merge_workspace: auto-committed uncommitted changes in '{}' for workspace {}",
-                repo.name, workspace.id
+                repo.name,
+                workspace.id
             );
         }
         Ok(false) => {} // Clean worktree — normal case
         Err(e) => {
             tracing::warn!(
                 "merge_workspace: failed to auto-commit in '{}': {}",
-                repo.name, e
+                repo.name,
+                e
             );
         }
     }
@@ -264,7 +270,9 @@ pub async fn merge_workspace(
         let target = workspace_repo.target_branch.clone();
         tracing::info!(
             "merge_workspace: branches diverged, auto-rebasing '{}' onto '{}' for workspace {}",
-            workspace.branch, target, workspace.id
+            workspace.branch,
+            target,
+            workspace.id
         );
         match deployment.git().rebase_branch(
             &repo.path,
@@ -283,7 +291,10 @@ pub async fn merge_workspace(
                     &commit_message,
                 );
             }
-            Err(GitServiceError::MergeConflicts { message, conflicted_files }) => {
+            Err(GitServiceError::MergeConflicts {
+                message,
+                conflicted_files,
+            }) => {
                 return Ok(ResponseJson(
                     ApiResponse::<(), GitOperationError>::error_with_data(
                         GitOperationError::MergeConflicts {
@@ -883,24 +894,30 @@ pub async fn rebase_workspace(
     if let Err(e) = deployment.git().abort_conflicts(&worktree_path) {
         tracing::warn!(
             "rebase_workspace: failed to abort stale conflicts in '{}': {}",
-            repo.name, e
+            repo.name,
+            e
         );
     }
 
     // Failsafe: auto-commit any uncommitted changes before rebasing.
     // This prevents rebase failures when the agent left uncommitted work.
-    match deployment.git().commit(&worktree_path, "wip: uncommitted changes before rebase") {
+    match deployment
+        .git()
+        .commit(&worktree_path, "wip: uncommitted changes before rebase")
+    {
         Ok(true) => {
             tracing::info!(
                 "rebase_workspace: auto-committed uncommitted changes in '{}' for workspace {}",
-                repo.name, workspace.id
+                repo.name,
+                workspace.id
             );
         }
         Ok(false) => {} // Clean worktree — normal case
         Err(e) => {
             tracing::warn!(
                 "rebase_workspace: failed to auto-commit in '{}': {}",
-                repo.name, e
+                repo.name,
+                e
             );
         }
     }

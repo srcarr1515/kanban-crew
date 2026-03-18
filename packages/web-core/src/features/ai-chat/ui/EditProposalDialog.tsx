@@ -16,6 +16,9 @@ import {
   PlusIcon,
   SpinnerIcon,
   ArrowSquareOutIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
+  ArrowBendUpLeftIcon,
 } from '@phosphor-icons/react';
 import type { Proposal, ProposalTicket } from '@/shared/lib/local/chatApi';
 import { createLocalTask } from '@/shared/lib/local/localApi';
@@ -34,6 +37,12 @@ interface EditProposalProps {
   projectId: string;
 }
 
+const STATUS_OPTIONS = [
+  { value: 'backlog', label: 'Backlog' },
+  { value: 'todo', label: 'To Do' },
+  { value: 'in_progress', label: 'In Progress' },
+];
+
 const EditProposalDialogImpl = create<EditProposalProps>(
   ({ proposal, projectId }) => {
     const modal = useModal();
@@ -43,14 +52,21 @@ const EditProposalDialogImpl = create<EditProposalProps>(
 
     useEffect(() => {
       if (modal.visible) {
-        setTickets(proposal.tickets.map((t) => ({ ...t })));
+        setTickets(
+          proposal.tickets.map((t) => ({
+            ...t,
+            subtasks: t.subtasks ? t.subtasks.map((s) => ({ ...s })) : [],
+          }))
+        );
         setStatus('idle');
       }
     }, [modal.visible, proposal.tickets]);
 
+    // ── Field updates ──────────────────────────────────────────────────────
+
     const updateTicket = (
       index: number,
-      field: keyof ProposalTicket,
+      field: keyof Omit<ProposalTicket, 'subtasks'>,
       value: string
     ) => {
       setTickets((prev) =>
@@ -58,16 +74,133 @@ const EditProposalDialogImpl = create<EditProposalProps>(
       );
     };
 
-    const removeTicket = (index: number) => {
-      setTickets((prev) => prev.filter((_, i) => i !== index));
+    const updateSubtask = (
+      parentIndex: number,
+      subIndex: number,
+      field: keyof Omit<ProposalTicket, 'subtasks'>,
+      value: string
+    ) => {
+      setTickets((prev) =>
+        prev.map((t, i) => {
+          if (i !== parentIndex) return t;
+          return {
+            ...t,
+            subtasks: (t.subtasks ?? []).map((s, j) =>
+              j === subIndex ? { ...s, [field]: value } : s
+            ),
+          };
+        })
+      );
     };
+
+    // ── Add / remove ───────────────────────────────────────────────────────
 
     const addTicket = () => {
       setTickets((prev) => [
         ...prev,
-        { title: '', description: '', status: 'todo' },
+        { title: '', description: '', status: 'todo', subtasks: [] },
       ]);
     };
+
+    const removeTicket = (index: number) => {
+      setTickets((prev) => prev.filter((_, i) => i !== index));
+    };
+
+    const addSubtask = (parentIndex: number) => {
+      setTickets((prev) =>
+        prev.map((t, i) => {
+          if (i !== parentIndex) return t;
+          return {
+            ...t,
+            subtasks: [
+              ...(t.subtasks ?? []),
+              { title: '', description: '', status: 'todo' },
+            ],
+          };
+        })
+      );
+    };
+
+    const removeSubtask = (parentIndex: number, subIndex: number) => {
+      setTickets((prev) =>
+        prev.map((t, i) => {
+          if (i !== parentIndex) return t;
+          return {
+            ...t,
+            subtasks: (t.subtasks ?? []).filter((_, j) => j !== subIndex),
+          };
+        })
+      );
+    };
+
+    // ── Reorder subtasks ───────────────────────────────────────────────────
+
+    const moveSubtaskUp = (parentIndex: number, subIndex: number) => {
+      if (subIndex === 0) return;
+      setTickets((prev) =>
+        prev.map((t, i) => {
+          if (i !== parentIndex) return t;
+          const subs = [...(t.subtasks ?? [])];
+          [subs[subIndex - 1], subs[subIndex]] = [subs[subIndex], subs[subIndex - 1]];
+          return { ...t, subtasks: subs };
+        })
+      );
+    };
+
+    const moveSubtaskDown = (parentIndex: number, subIndex: number) => {
+      setTickets((prev) =>
+        prev.map((t, i) => {
+          if (i !== parentIndex) return t;
+          const subs = [...(t.subtasks ?? [])];
+          if (subIndex >= subs.length - 1) return t;
+          [subs[subIndex], subs[subIndex + 1]] = [subs[subIndex + 1], subs[subIndex]];
+          return { ...t, subtasks: subs };
+        })
+      );
+    };
+
+    // ── Promote / demote ───────────────────────────────────────────────────
+
+    /** Lift a subtask out of its parent and insert it as a top-level ticket. */
+    const promoteSubtask = (parentIndex: number, subIndex: number) => {
+      setTickets((prev) => {
+        const parent = prev[parentIndex];
+        const sub = (parent.subtasks ?? [])[subIndex];
+        if (!sub) return prev;
+        const updatedParent = {
+          ...parent,
+          subtasks: (parent.subtasks ?? []).filter((_, j) => j !== subIndex),
+        };
+        const next = prev.map((t, i) => (i === parentIndex ? updatedParent : t));
+        // Insert the promoted ticket immediately after its former parent
+        next.splice(parentIndex + 1, 0, { ...sub, subtasks: [] });
+        return next;
+      });
+    };
+
+    /** Move a top-level ticket into the subtasks of another ticket. */
+    const demoteTicket = (ticketIndex: number, targetParentIndex: number) => {
+      setTickets((prev) => {
+        const ticket = prev[ticketIndex];
+        const newSub: ProposalTicket = {
+          title: ticket.title,
+          description: ticket.description,
+          status: ticket.status,
+        };
+        const without = prev.filter((_, i) => i !== ticketIndex);
+        // After removal the target's index shifts down by 1 if it was after the removed item
+        const adjusted =
+          targetParentIndex > ticketIndex
+            ? targetParentIndex - 1
+            : targetParentIndex;
+        return without.map((t, i) => {
+          if (i !== adjusted) return t;
+          return { ...t, subtasks: [...(t.subtasks ?? []), newSub] };
+        });
+      });
+    };
+
+    // ── Create ─────────────────────────────────────────────────────────────
 
     const handleCreate = async () => {
       const valid = tickets.filter((t) => t.title.trim());
@@ -76,12 +209,26 @@ const EditProposalDialogImpl = create<EditProposalProps>(
       setStatus('creating');
       try {
         for (const ticket of valid) {
-          await createLocalTask({
+          const parent = await createLocalTask({
             project_id: projectId,
             title: ticket.title.trim(),
             description: ticket.description.trim() || undefined,
             status: ticket.status || 'todo',
           });
+          const validSubs = (ticket.subtasks ?? []).filter((s) =>
+            s.title.trim()
+          );
+          for (let i = 0; i < validSubs.length; i++) {
+            const sub = validSubs[i];
+            await createLocalTask({
+              project_id: projectId,
+              title: sub.title.trim(),
+              description: sub.description.trim() || undefined,
+              status: sub.status || 'todo',
+              parent_task_id: parent.id,
+              parent_task_sort_order: i,
+            });
+          }
         }
         await queryClient.invalidateQueries({
           queryKey: ['local', 'tasks', projectId],
@@ -98,7 +245,6 @@ const EditProposalDialogImpl = create<EditProposalProps>(
         const ticket = tickets[index];
         if (!ticket) return;
 
-        // Open the kanban issue composer with this ticket's data
         const composerKey = buildKanbanIssueComposerKey(null, projectId);
         openKanbanIssueComposer(composerKey);
         patchKanbanIssueComposer(composerKey, {
@@ -106,7 +252,6 @@ const EditProposalDialogImpl = create<EditProposalProps>(
           description: ticket.description || null,
         });
 
-        // Remove from the modal list
         setTickets((prev) => prev.filter((_, i) => i !== index));
       },
       [tickets, projectId]
@@ -121,7 +266,13 @@ const EditProposalDialogImpl = create<EditProposalProps>(
       if (!open) handleCancel();
     };
 
-    const validCount = tickets.filter((t) => t.title.trim()).length;
+    const validParentCount = tickets.filter((t) => t.title.trim()).length;
+    const validSubtaskCount = tickets.reduce(
+      (sum, t) =>
+        sum + (t.subtasks ?? []).filter((s) => s.title.trim()).length,
+      0
+    );
+    const totalCount = validParentCount + validSubtaskCount;
 
     return (
       <Dialog open={modal.visible} onOpenChange={handleOpenChange}>
@@ -192,9 +343,11 @@ const EditProposalDialogImpl = create<EditProposalProps>(
                           disabled={status === 'creating'}
                           className="rounded-md border border-border bg-primary px-2 py-1 text-xs text-high focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-50"
                         >
-                          <option value="backlog">Backlog</option>
-                          <option value="todo">To Do</option>
-                          <option value="in_progress">In Progress</option>
+                          {STATUS_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
                         </select>
                       </div>
                       <button
@@ -207,6 +360,113 @@ const EditProposalDialogImpl = create<EditProposalProps>(
                         <ArrowSquareOutIcon className="size-3.5" />
                         Open in Composer
                       </button>
+                    </div>
+
+                    {/* Subtasks */}
+                    {(ticket.subtasks ?? []).length > 0 && (
+                      <div className="space-y-1.5 pl-3 border-l-2 border-brand/20">
+                        <span className="text-xs text-low font-medium">
+                          Subtasks
+                        </span>
+                        {(ticket.subtasks ?? []).map((sub, j) => {
+                          const subs = ticket.subtasks ?? [];
+                          return (
+                            <div key={j} className="flex items-center gap-1.5">
+                              {/* Reorder */}
+                              <div className="flex flex-col shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => moveSubtaskUp(i, j)}
+                                  disabled={status === 'creating' || j === 0}
+                                  className="p-0.5 rounded text-low hover:text-normal disabled:opacity-20 transition-colors"
+                                  title="Move up"
+                                >
+                                  <ArrowUpIcon className="size-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => moveSubtaskDown(i, j)}
+                                  disabled={
+                                    status === 'creating' ||
+                                    j === subs.length - 1
+                                  }
+                                  className="p-0.5 rounded text-low hover:text-normal disabled:opacity-20 transition-colors"
+                                  title="Move down"
+                                >
+                                  <ArrowDownIcon className="size-3" />
+                                </button>
+                              </div>
+                              <Input
+                                value={sub.title}
+                                onChange={(e) =>
+                                  updateSubtask(i, j, 'title', e.target.value)
+                                }
+                                placeholder="Subtask title"
+                                disabled={status === 'creating'}
+                                className="flex-1 text-xs"
+                              />
+                              {/* Promote to top-level ticket */}
+                              <button
+                                type="button"
+                                onClick={() => promoteSubtask(i, j)}
+                                disabled={status === 'creating'}
+                                className="shrink-0 p-1 rounded text-low hover:text-brand hover:bg-brand/10 transition-colors disabled:opacity-50"
+                                title="Promote to standalone ticket"
+                              >
+                                <ArrowBendUpLeftIcon className="size-3.5" />
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => removeSubtask(i, j)}
+                                disabled={status === 'creating'}
+                                className="shrink-0 p-1 rounded text-low hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50"
+                                title="Remove subtask"
+                              >
+                                <TrashIcon className="size-3.5" />
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <button
+                        type="button"
+                        onClick={() => addSubtask(i)}
+                        disabled={status === 'creating'}
+                        className="flex items-center gap-1 text-xs text-low hover:text-brand transition-colors disabled:opacity-50"
+                      >
+                        <PlusIcon className="size-3" weight="bold" />
+                        Add subtask
+                      </button>
+
+                      {/* Demote this ticket to a subtask of another */}
+                      {tickets.filter((_, k) => k !== i && tickets[k].title.trim()).length > 0 && (
+                        <div className="flex items-center gap-1">
+                          <span className="text-xs text-low">Nest under:</span>
+                          <select
+                            value=""
+                            onChange={(e) => {
+                              if (e.target.value !== '')
+                                demoteTicket(i, parseInt(e.target.value, 10));
+                            }}
+                            disabled={status === 'creating'}
+                            className="rounded border border-border bg-primary px-1.5 py-0.5 text-xs text-high focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-50 max-w-[140px]"
+                          >
+                            <option value="">— choose parent —</option>
+                            {tickets.map((t, k) =>
+                              k !== i && t.title.trim() ? (
+                                <option key={k} value={k}>
+                                  {t.title.length > 24
+                                    ? t.title.slice(0, 22) + '…'
+                                    : t.title}
+                                </option>
+                              ) : null
+                            )}
+                          </select>
+                        </div>
+                      )}
                     </div>
                   </div>
                   <button
@@ -247,10 +507,10 @@ const EditProposalDialogImpl = create<EditProposalProps>(
             >
               {tickets.length === 0 ? 'Close' : 'Cancel'}
             </Button>
-            {validCount > 0 && (
+            {totalCount > 0 && (
               <Button
                 onClick={handleCreate}
-                disabled={status === 'creating' || validCount === 0}
+                disabled={status === 'creating' || totalCount === 0}
               >
                 {status === 'creating' ? (
                   <span className="flex items-center gap-2">
@@ -258,7 +518,7 @@ const EditProposalDialogImpl = create<EditProposalProps>(
                     Creating...
                   </span>
                 ) : (
-                  `Create ${validCount} Ticket${validCount === 1 ? '' : 's'}`
+                  `Create ${totalCount} Ticket${totalCount === 1 ? '' : 's'}`
                 )}
               </Button>
             )}

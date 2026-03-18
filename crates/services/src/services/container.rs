@@ -248,18 +248,23 @@ pub trait ContainerService {
             let workspace_root = PathBuf::from(container_ref);
             for repo in &ctx.repos {
                 let worktree_path = workspace_root.join(&repo.name);
-                match self.git().commit(&worktree_path, "wip: uncommitted changes from agent session") {
+                match self.git().commit(
+                    &worktree_path,
+                    "wip: uncommitted changes from agent session",
+                ) {
                     Ok(true) => {
                         tracing::info!(
                             "finalize_task: safety-committed uncommitted changes in repo '{}' for workspace {}",
-                            repo.name, ctx.workspace.id
+                            repo.name,
+                            ctx.workspace.id
                         );
                     }
                     Ok(false) => {} // No changes — expected happy path
                     Err(e) => {
                         tracing::warn!(
                             "finalize_task: failed to safety-commit in repo '{}': {}",
-                            repo.name, e
+                            repo.name,
+                            e
                         );
                     }
                 }

@@ -15,16 +15,33 @@ export function ProposalCard({ proposal }: ProposalCardProps) {
   const queryClient = useQueryClient();
   const [status, setStatus] = useState<'idle' | 'creating' | 'done'>('idle');
 
+  const totalCount =
+    proposal.tickets.length +
+    proposal.tickets.reduce((sum, t) => sum + (t.subtasks?.length ?? 0), 0);
+
   const handleConfirm = async () => {
     setStatus('creating');
     try {
       for (const ticket of proposal.tickets) {
-        await createLocalTask({
+        const parent = await createLocalTask({
           project_id: projectId,
           title: ticket.title,
           description: ticket.description,
           status: ticket.status || 'todo',
         });
+        if (ticket.subtasks && ticket.subtasks.length > 0) {
+          for (let i = 0; i < ticket.subtasks.length; i++) {
+            const sub = ticket.subtasks[i];
+            await createLocalTask({
+              project_id: projectId,
+              title: sub.title,
+              description: sub.description,
+              status: sub.status || 'todo',
+              parent_task_id: parent.id,
+              parent_task_sort_order: i,
+            });
+          }
+        }
       }
       await queryClient.invalidateQueries({ queryKey: ['local', 'tasks', projectId] });
       setStatus('done');
@@ -43,20 +60,32 @@ export function ProposalCard({ proposal }: ProposalCardProps) {
   return (
     <div className="my-2 rounded-lg border border-brand/30 bg-brand/5 p-3">
       <div className="text-xs font-semibold text-brand mb-2">
-        Proposed Tickets ({proposal.tickets.length})
+        Proposed Tickets ({totalCount})
       </div>
       <ul className="space-y-1.5 mb-3">
         {proposal.tickets.map((ticket, i) => (
-          <li key={i} className="flex gap-2 text-sm">
-            <span className="text-low shrink-0">{i + 1}.</span>
-            <div className="min-w-0">
-              <div className="font-medium text-high">{ticket.title}</div>
-              {ticket.description && (
-                <div className="text-xs text-low mt-0.5 line-clamp-2">
-                  {ticket.description}
-                </div>
-              )}
+          <li key={i}>
+            <div className="flex gap-2 text-sm">
+              <span className="text-low shrink-0">{i + 1}.</span>
+              <div className="min-w-0">
+                <div className="font-medium text-high">{ticket.title}</div>
+                {ticket.description && (
+                  <div className="text-xs text-low mt-0.5 line-clamp-2">
+                    {ticket.description}
+                  </div>
+                )}
+              </div>
             </div>
+            {ticket.subtasks && ticket.subtasks.length > 0 && (
+              <ul className="ml-6 mt-1 space-y-0.5">
+                {ticket.subtasks.map((sub, j) => (
+                  <li key={j} className="flex gap-1.5 text-xs text-low">
+                    <span className="shrink-0">↳</span>
+                    <span>{sub.title}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
           </li>
         ))}
       </ul>
