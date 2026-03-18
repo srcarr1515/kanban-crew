@@ -24,7 +24,7 @@ pub struct ChatThread {
     pub id: String,
     pub project_id: Uuid,
     pub issue_id: Option<String>,
-    pub crew_member_id: Option<String>,
+    pub crew_member_id: Option<Uuid>,
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -52,13 +52,13 @@ pub struct CreateThreadRequest {
     pub project_id: Uuid,
     pub issue_id: Option<String>,
     pub title: Option<String>,
-    pub crew_member_id: Option<String>,
+    pub crew_member_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateThreadRequest {
     pub title: Option<String>,
-    pub crew_member_id: Option<String>,
+    pub crew_member_id: Option<Uuid>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,7 +76,7 @@ pub struct ImageAttachment {
 pub struct SendMessageRequest {
     pub thread_id: String,
     pub content: String,
-    pub crew_member_id: Option<String>,
+    pub crew_member_id: Option<Uuid>,
     pub images: Option<Vec<ImageAttachment>>,
 }
 
@@ -251,12 +251,10 @@ async fn chat_completion(
     .await?;
 
     // 3. Build system prompt — optionally augmented with crew member persona
-    let system_prompt = if let Some(ref crew_id) = request.crew_member_id {
-        let crew_uuid = Uuid::parse_str(crew_id)
-            .map_err(|_| ApiError::BadRequest(format!("Invalid crew member ID: {crew_id}")))?;
+    let system_prompt = if let Some(crew_id) = request.crew_member_id {
         let crew_member: Option<(String, String, String)> =
             sqlx::query_as("SELECT name, role_prompt, personality FROM crew_members WHERE id = ?")
-                .bind(crew_uuid)
+                .bind(crew_id)
                 .fetch_optional(pool)
                 .await?;
 

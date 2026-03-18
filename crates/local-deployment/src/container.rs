@@ -19,7 +19,7 @@ use db::{
         execution_process_repo_state::ExecutionProcessRepoState,
         repo::Repo,
         scratch::{DraftFollowUpData, Scratch, ScratchType},
-        session::{Session, SessionError},
+        session::{CreateSession, Session, SessionError},
         workspace::Workspace,
         workspace_repo::WorkspaceRepo,
     },
@@ -705,7 +705,7 @@ impl LocalContainerService {
                     (
                         selected_task_title.clone(),
                         task_description.clone(),
-                        "Implement the following task:",
+                        None, // no sub-task context
                     )
                 } else {
                     tracing::info!(
@@ -713,14 +713,57 @@ impl LocalContainerService {
                         selected_task_title,
                         sub_title,
                     );
-                    (sub_title, sub_desc, "Implement the following task:")
+
+                    // Gather sibling sub-tasks for context
+                    let siblings: Vec<(String, String)> = sqlx::query_as(
+                        r#"SELECT title, status FROM tasks
+                           WHERE parent_task_id = ?
+                           ORDER BY parent_task_sort_order ASC, created_at ASC"#,
+                    )
+                    .bind(selected_task_id)
+                    .fetch_all(&self.db.pool)
+                    .await
+                    .unwrap_or_default();
+
+                    let sibling_lines: Vec<String> = siblings
+                        .iter()
+                        .map(|(title, status)| {
+                            let marker = match status.as_str() {
+                                "done" => "[done]",
+                                "in_review" => "[in review]",
+                                "in_progress" => "[in progress]",
+                                "cancelled" => "[cancelled]",
+                                _ => "[ready]",
+                            };
+                            if title == &sub_title && status == "in_progress" {
+                                format!("- {marker} {title}  <-- you are here")
+                            } else {
+                                format!("- {marker} {title}")
+                            }
+                        })
+                        .collect();
+
+                    let context = format!(
+                        "You are working on the first sub-task of a larger effort.\n\n\
+                         ## Parent Task\nTitle: {}\n{}\n\
+                         ## Sub-tasks\n{}\n\n\
+                         ## Your Task\n",
+                        selected_task_title,
+                        task_description
+                            .as_deref()
+                            .map(|d| format!("Description: {d}\n"))
+                            .unwrap_or_default(),
+                        sibling_lines.join("\n"),
+                    );
+
+                    (sub_title, sub_desc, Some(context))
                 }
             } else {
                 // Another agent claimed it, fall through to parent
                 (
                     selected_task_title.clone(),
                     task_description.clone(),
-                    "Implement the following task:",
+                    None,
                 )
             }
         } else {
@@ -728,20 +771,31 @@ impl LocalContainerService {
             (
                 selected_task_title.clone(),
                 task_description.clone(),
-                "Implement the following task:",
+                None,
             )
         };
 
         // Build prompt from the task
-        let prompt = format!(
-            "{}\n\nTitle: {}\n{}",
-            prompt_prefix,
-            prompt_task_title,
-            prompt_task_description
-                .as_deref()
-                .map(|d| format!("\nDescription: {d}"))
-                .unwrap_or_default()
-        );
+        let prompt = if let Some(context) = prompt_prefix {
+            format!(
+                "{}Implement the following:\n\nTitle: {}\n{}",
+                context,
+                prompt_task_title,
+                prompt_task_description
+                    .as_deref()
+                    .map(|d| format!("\nDescription: {d}"))
+                    .unwrap_or_default()
+            )
+        } else {
+            format!(
+                "Implement the following task:\n\nTitle: {}\n{}",
+                prompt_task_title,
+                prompt_task_description
+                    .as_deref()
+                    .map(|d| format!("\nDescription: {d}"))
+                    .unwrap_or_default()
+            )
+        };
 
         let workspace = managed_workspace.workspace.clone();
 
@@ -827,25 +881,35 @@ impl LocalContainerService {
             return Ok(false);
         }
 
-        // Find the latest session for the parent workspace
-        let session =
-            match Session::find_latest_by_workspace_id(&self.db.pool, parent_workspace.id).await? {
-                Some(s) => s,
-                None => return Ok(false),
-            };
-
-        // Find the latest completed execution process from this session
-        let latest_ep = ExecutionProcess::find_latest_by_session_and_run_reason(
-            &self.db.pool,
-            session.id,
-            &ExecutionProcessRunReason::CodingAgent,
-        )
-        .await?;
-
-        let execution_process = match latest_ep {
-            Some(ep) => ep,
-            None => return Ok(false),
-        };
+        // Commit any uncommitted changes from the previous sub-task before
+        // starting the next one, so each sub-task gets its own commit.
+        if let Some(container_ref) = parent_workspace.container_ref.as_ref() {
+            let workspace_root = PathBuf::from(container_ref);
+            let repos =
+                WorkspaceRepo::find_repos_for_workspace(&self.db.pool, parent_workspace.id).await?;
+            for repo in &repos {
+                let worktree_path = workspace_root.join(&repo.name);
+                match self.git().commit(
+                    &worktree_path,
+                    "wip: uncommitted changes from previous sub-task",
+                ) {
+                    Ok(true) => {
+                        tracing::info!(
+                            "try_reuse_parent_workspace: committed changes in repo '{}' before starting next sub-task",
+                            repo.name,
+                        );
+                    }
+                    Ok(false) => {} // No changes — expected
+                    Err(e) => {
+                        tracing::warn!(
+                            "try_reuse_parent_workspace: failed to commit in repo '{}': {}",
+                            repo.name,
+                            e
+                        );
+                    }
+                }
+            }
+        }
 
         // Re-link the workspace to the sub-issue task
         Workspace::link_to_task(&self.db.pool, parent_workspace.id, sub_task_id).await?;
@@ -872,35 +936,171 @@ impl LocalContainerService {
             .await;
         }
 
-        // Build the follow-up prompt
-        let prompt = format!(
-            "The previous task is complete. Now implement this sub-issue:\n\nTitle: {}\n{}",
+        // Gather context for the prompt: parent info, sibling statuses, diff stat
+        let parent_title: Option<String> =
+            sqlx::query_scalar("SELECT title FROM tasks WHERE id = ?")
+                .bind(parent_task_id)
+                .fetch_optional(&self.db.pool)
+                .await
+                .ok()
+                .flatten();
+
+        let parent_description: Option<String> =
+            sqlx::query_scalar("SELECT description FROM tasks WHERE id = ?")
+                .bind(parent_task_id)
+                .fetch_optional(&self.db.pool)
+                .await
+                .ok()
+                .flatten();
+
+        let siblings: Vec<(String, String)> = sqlx::query_as(
+            r#"SELECT title, status FROM tasks
+               WHERE parent_task_id = ?
+               ORDER BY parent_task_sort_order ASC, created_at ASC"#,
+        )
+        .bind(parent_task_id)
+        .fetch_all(&self.db.pool)
+        .await
+        .unwrap_or_default();
+
+        // Build sibling list with status markers
+        let siblings_section = if siblings.is_empty() {
+            String::new()
+        } else {
+            let lines: Vec<String> = siblings
+                .iter()
+                .map(|(title, status)| {
+                    let marker = match status.as_str() {
+                        "done" => "[done]",
+                        "in_review" => "[in review]",
+                        "in_progress" => "[in progress]",
+                        "cancelled" => "[cancelled]",
+                        _ => "[ready]",
+                    };
+                    if title == sub_task_title && status == "in_progress" {
+                        format!("- {marker} {title}  <-- you are here")
+                    } else {
+                        format!("- {marker} {title}")
+                    }
+                })
+                .collect();
+            format!("\n## Sub-tasks\n{}\n", lines.join("\n"))
+        };
+
+        // Get git diff --stat against the base branch to show what's already been changed
+        let diff_stat_section = if let Some(container_ref) = parent_workspace.container_ref.as_ref()
+        {
+            let workspace_root = PathBuf::from(container_ref);
+            let repos =
+                WorkspaceRepo::find_repos_for_workspace(&self.db.pool, parent_workspace.id).await?;
+            let git_cli = git::GitCli::new();
+            let mut diff_parts = Vec::new();
+
+            for repo in &repos {
+                let worktree_path = workspace_root.join(&repo.name);
+                let base = repo
+                    .default_target_branch
+                    .as_deref()
+                    .unwrap_or("main");
+
+                match git_cli.git(
+                    &worktree_path,
+                    ["diff", "--stat", &format!("{base}...HEAD")],
+                ) {
+                    Ok(stat) if !stat.trim().is_empty() => {
+                        diff_parts.push(format!("### {}\n```\n{}\n```", repo.name, stat.trim()));
+                    }
+                    _ => {}
+                }
+            }
+
+            if diff_parts.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "\n## Changes already made on this branch\n{}\n",
+                    diff_parts.join("\n")
+                )
+            }
+        } else {
+            String::new()
+        };
+
+        // Build the enriched prompt
+        let mut prompt = String::from("You are working on a sub-task as part of a larger effort.\n");
+
+        if let Some(ref title) = parent_title {
+            prompt.push_str(&format!("\n## Parent Task\nTitle: {title}\n"));
+            if let Some(ref desc) = parent_description {
+                if !desc.is_empty() {
+                    prompt.push_str(&format!("Description: {desc}\n"));
+                }
+            }
+        }
+
+        prompt.push_str(&siblings_section);
+        prompt.push_str(&diff_stat_section);
+
+        prompt.push_str(&format!(
+            "\n## Your Task\nImplement the following:\n\nTitle: {}\n{}",
             sub_task_title,
             description
                 .map(|d| format!("\nDescription: {d}"))
                 .unwrap_or_default()
+        ));
+
+        prompt.push_str(
+            "\n\nThe workspace and branch were created for the parent task. \
+             Previous sub-tasks have already been implemented on this branch. \
+             Build on the existing work."
         );
 
-        let follow_up_data = DraftFollowUpData {
-            message: prompt,
-            executor_config: executor_config.clone(),
-        };
+        // Start a fresh session on the existing workspace so the new sub-task
+        // gets a clean context window instead of inheriting the previous agent's
+        // full conversation history.
+        let new_session = Session::create(
+            &self.db.pool,
+            &CreateSession {
+                executor: Some(executor_config.executor.to_string()),
+                name: None,
+            },
+            Uuid::new_v4(),
+            parent_workspace.id,
+        )
+        .await?;
 
         let repos =
             WorkspaceRepo::find_repos_for_workspace(&self.db.pool, parent_workspace.id).await?;
 
-        let ctx = ExecutionContext {
-            execution_process,
-            session,
-            workspace: parent_workspace,
-            repos,
-        };
+        let cleanup_action = self.cleanup_actions_for_repos(&repos);
 
-        let ep = self.start_queued_follow_up(&ctx, &follow_up_data).await?;
+        let working_dir = new_session
+            .agent_working_dir
+            .as_ref()
+            .filter(|dir| !dir.is_empty())
+            .cloned();
+
+        let coding_action = ExecutorAction::new(
+            ExecutorActionType::CodingAgentInitialRequest(CodingAgentInitialRequest {
+                prompt,
+                executor_config: executor_config.clone(),
+                working_dir,
+            }),
+            cleanup_action.map(Box::new),
+        );
+
+        let ep = self
+            .start_execution(
+                &parent_workspace,
+                &new_session,
+                &coding_action,
+                &ExecutionProcessRunReason::CodingAgent,
+            )
+            .await?;
 
         tracing::info!(
-            "Auto-pickup: sent follow-up to parent workspace {} for sub-issue \"{}\" (execution {})",
-            ctx.workspace.id,
+            "Auto-pickup: started fresh session on workspace {} for sub-issue \"{}\" (execution {})",
+            parent_workspace.id,
             sub_task_title,
             ep.id,
         );

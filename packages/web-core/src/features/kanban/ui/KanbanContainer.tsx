@@ -678,7 +678,7 @@ export function KanbanContainer() {
         const parentWsId = parentWorkspaces[0]?.local_workspace_id;
 
         if (parentWsId) {
-          // Reuse the parent's workspace: re-link to sub-task and send follow-up
+          // Reuse the parent's workspace with a fresh session (clean context)
           try {
             // Re-link workspace to the sub-task
             await linkWorkspaceToTask(result.subtaskId, parentWsId);
@@ -687,39 +687,74 @@ export function KanbanContainer() {
             // (parent will transition to in_review once all sub-tasks complete)
             updateIssue(result.subtaskId, { status_id: 'in_progress' });
 
-            // Get the session for follow-up
-            const sessions = await sessionsApi.getByWorkspace(parentWsId);
-            const session = sessions[0];
-            if (session) {
-              // Resolve executor config
-              const systemInfo = await configApi.getConfig();
-              const executors = systemInfo.executors ?? {};
-              const executorKeys = Object.keys(executors);
-              const savedExecutor = getAutoCreateExecutor(projectId);
-              const executorName =
-                (savedExecutor && executorKeys.includes(savedExecutor)
-                  ? savedExecutor
-                  : null) ??
-                (executorKeys.includes('CLAUDE_CODE') ? 'CLAUDE_CODE' : null) ??
-                executorKeys[0];
+            // Resolve executor config
+            const systemInfo = await configApi.getConfig();
+            const executors = systemInfo.executors ?? {};
+            const executorKeys = Object.keys(executors);
+            const savedExecutor = getAutoCreateExecutor(projectId);
+            const executorName =
+              (savedExecutor && executorKeys.includes(savedExecutor)
+                ? savedExecutor
+                : null) ??
+              (executorKeys.includes('CLAUDE_CODE') ? 'CLAUDE_CODE' : null) ??
+              executorKeys[0];
 
-              if (executorName) {
-                const title = subTask?.title ?? 'Untitled sub-task';
-                const description = subTask?.description ?? '';
-                const prompt = description
-                  ? `Work on this sub-task: ${title}\n\n${description}`
-                  : `Work on this sub-task: ${title}`;
+            if (executorName) {
+              // Create a fresh session on the same workspace so the agent
+              // starts with a clean context instead of the previous sub-task's history
+              const newSession = await sessionsApi.create({
+                workspace_id: parentWsId,
+                executor: executorName,
+              });
 
-                await sessionsApi.followUp(session.id, {
-                  prompt,
-                  executor_config: {
-                    executor: executorName as BaseCodingAgent,
-                  },
-                  retry_process_id: null,
-                  force_when_dirty: null,
-                  perform_git_reset: null,
-                });
+              // Build enriched prompt with parent context and sibling statuses
+              const subTitle = subTask?.title ?? 'Untitled sub-task';
+              const subDesc = subTask?.description ?? '';
+              const siblingTasks = issues.filter(
+                (i) => i.parent_issue_id === issueId
+              );
+
+              const statusLabel = (s: string) => {
+                switch (s) {
+                  case 'done': return '[done]';
+                  case 'in_review': return '[in review]';
+                  case 'in_progress': return '[in progress]';
+                  case 'cancelled': return '[cancelled]';
+                  default: return '[ready]';
+                }
+              };
+
+              const siblingLines = siblingTasks
+                .map((t) => {
+                  const marker = statusLabel(t.status_id);
+                  const here = t.id === result.subtaskId ? '  <-- you are here' : '';
+                  return `- ${marker} ${t.title}${here}`;
+                })
+                .join('\n');
+
+              let prompt = `You are working on a sub-task as part of a larger effort.\n\n`;
+              prompt += `## Parent Task\nTitle: ${issue.title}\n`;
+              if (issue.description) {
+                prompt += `Description: ${issue.description}\n`;
               }
+              if (siblingLines) {
+                prompt += `\n## Sub-tasks\n${siblingLines}\n`;
+              }
+              prompt += `\n## Your Task\nImplement the following:\n\nTitle: ${subTitle}\n`;
+              if (subDesc) {
+                prompt += `\nDescription: ${subDesc}\n`;
+              }
+              prompt += `\nThe workspace and branch were created for the parent task. Previous sub-tasks have already been implemented on this branch. Build on the existing work.`;
+
+              await sessionsApi.followUp(newSession.id, {
+                prompt,
+                executor_config: {
+                  executor: executorName as BaseCodingAgent,
+                },
+                retry_process_id: null,
+                force_when_dirty: null,
+                perform_git_reset: null,
+              });
             }
 
             queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
@@ -785,37 +820,70 @@ export function KanbanContainer() {
           // Parent stays in_progress — it will transition to in_review
           // once all sub-tasks are complete.
 
-          // Send follow-up prompt
-          const sessions = await sessionsApi.getByWorkspace(parentWsId);
-          const session = sessions[0];
-          if (session) {
-            const systemInfo = await configApi.getConfig();
-            const executors = systemInfo.executors ?? {};
-            const executorKeys = Object.keys(executors);
-            const savedExecutor = getAutoCreateExecutor(projectId);
-            const executorName =
-              (savedExecutor && executorKeys.includes(savedExecutor)
-                ? savedExecutor
-                : null) ??
-              (executorKeys.includes('CLAUDE_CODE') ? 'CLAUDE_CODE' : null) ??
-              executorKeys[0];
+          // Start a fresh session on the same workspace (clean context)
+          const systemInfo = await configApi.getConfig();
+          const executors = systemInfo.executors ?? {};
+          const executorKeys = Object.keys(executors);
+          const savedExecutor = getAutoCreateExecutor(projectId);
+          const executorName =
+            (savedExecutor && executorKeys.includes(savedExecutor)
+              ? savedExecutor
+              : null) ??
+            (executorKeys.includes('CLAUDE_CODE') ? 'CLAUDE_CODE' : null) ??
+            executorKeys[0];
 
-            if (executorName) {
-              const description = issue.description ?? '';
-              const prompt = description
-                ? `Work on this sub-task: ${issue.title}\n\n${description}`
-                : `Work on this sub-task: ${issue.title}`;
+          if (executorName) {
+            const newSession = await sessionsApi.create({
+              workspace_id: parentWsId,
+              executor: executorName,
+            });
 
-              await sessionsApi.followUp(session.id, {
-                prompt,
-                executor_config: {
-                  executor: executorName as BaseCodingAgent,
-                },
-                retry_process_id: null,
-                force_when_dirty: null,
-                perform_git_reset: null,
-              });
+            // Build enriched prompt with parent context and sibling statuses
+            const siblingTasks = issues.filter(
+              (i) => i.parent_issue_id === issue.parent_issue_id
+            );
+
+            const statusLabel = (s: string) => {
+              switch (s) {
+                case 'done': return '[done]';
+                case 'in_review': return '[in review]';
+                case 'in_progress': return '[in progress]';
+                case 'cancelled': return '[cancelled]';
+                default: return '[ready]';
+              }
+            };
+
+            const siblingLines = siblingTasks
+              .map((t) => {
+                const marker = statusLabel(t.status_id);
+                const here = t.id === issueId ? '  <-- you are here' : '';
+                return `- ${marker} ${t.title}${here}`;
+              })
+              .join('\n');
+
+            let prompt = `You are working on a sub-task as part of a larger effort.\n\n`;
+            prompt += `## Parent Task\nTitle: ${parentIssue?.title ?? 'Parent task'}\n`;
+            if (parentIssue?.description) {
+              prompt += `Description: ${parentIssue.description}\n`;
             }
+            if (siblingLines) {
+              prompt += `\n## Sub-tasks\n${siblingLines}\n`;
+            }
+            prompt += `\n## Your Task\nImplement the following:\n\nTitle: ${issue.title}\n`;
+            if (issue.description) {
+              prompt += `\nDescription: ${issue.description}\n`;
+            }
+            prompt += `\nThe workspace and branch were created for the parent task. Previous sub-tasks have already been implemented on this branch. Build on the existing work.`;
+
+            await sessionsApi.followUp(newSession.id, {
+              prompt,
+              executor_config: {
+                executor: executorName as BaseCodingAgent,
+              },
+              retry_process_id: null,
+              force_when_dirty: null,
+              perform_git_reset: null,
+            });
           }
 
           queryClient.invalidateQueries({ queryKey: ['local', 'tasks'] });
