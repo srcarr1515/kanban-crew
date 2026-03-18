@@ -11,6 +11,7 @@ import {
   BroadcastIcon,
   CaretLeftIcon,
   XIcon,
+  BrainIcon,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { create, useModal } from '@ebay/nice-modal-react';
@@ -37,6 +38,7 @@ const SETTINGS_SECTIONS: {
   { id: 'organizations', icon: BuildingsIcon },
   { id: 'remote-projects', icon: CloudIcon },
   { id: 'agents', icon: CpuIcon },
+  { id: 'ai-providers', icon: BrainIcon },
   { id: 'mcp', icon: PlugIcon },
   { id: 'relay', icon: BroadcastIcon },
 ];

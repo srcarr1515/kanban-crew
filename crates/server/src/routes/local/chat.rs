@@ -251,45 +251,111 @@ async fn chat_completion(
     .await?;
 
     // 3. Build system prompt — optionally augmented with crew member persona
-    let system_prompt = if let Some(crew_id) = request.crew_member_id {
-        let crew_member: Option<(String, String, String)> =
-            sqlx::query_as("SELECT name, role_prompt, personality FROM crew_members WHERE id = ?")
-                .bind(crew_id)
-                .fetch_optional(pool)
-                .await?;
+    //    Also fetch per-member AI provider/model overrides.
+    #[derive(sqlx::FromRow)]
+    struct CrewMemberRow {
+        name: String,
+        role_prompt: String,
+        personality: String,
+        ai_provider: Option<String>,
+        ai_model: Option<String>,
+    }
 
-        if let Some((name, role_prompt, personality)) = crew_member {
-            let mut prompt = format!(
-                "# Identity\n\
-                 You are \"{name}\", a crew member on a software development team.\n\n\
-                 # Role & Expertise\n\
-                 {role_prompt}\n\n\
-                 # Communication Style\n\
-                 {personality}\n\n\
-                 Stay in character at all times. Respond as {name} would — \
-                 use the communication style described above and bring the expertise of your role \
-                 to every answer.\n\n\
-                 # Task Instructions\n"
-            );
-            prompt.push_str(SYSTEM_PROMPT);
-            prompt
-        } else {
-            SYSTEM_PROMPT.to_string()
-        }
+    let crew_row = if let Some(crew_id) = request.crew_member_id {
+        sqlx::query_as::<_, CrewMemberRow>(
+            "SELECT name, role_prompt, personality, ai_provider, ai_model FROM crew_members WHERE id = ?",
+        )
+        .bind(crew_id)
+        .fetch_optional(pool)
+        .await?
+    } else {
+        None
+    };
+
+    let system_prompt = if let Some(ref cm) = crew_row {
+        let mut prompt = format!(
+            "# Identity\n\
+             You are \"{}\", a crew member on a software development team.\n\n\
+             # Role & Expertise\n\
+             {}\n\n\
+             # Communication Style\n\
+             {}\n\n\
+             Stay in character at all times. Respond as {} would — \
+             use the communication style described above and bring the expertise of your role \
+             to every answer.\n\n\
+             # Task Instructions\n",
+            cm.name, cm.role_prompt, cm.personality, cm.name
+        );
+        prompt.push_str(SYSTEM_PROMPT);
+        prompt
     } else {
         SYSTEM_PROMPT.to_string()
     };
 
-    // 4. Decide backend: prefer Claude CLI, fall back to Anthropic API
-    let use_cli = std::env::var("CHAT_BACKEND").unwrap_or_default() != "anthropic-api";
+    // 4. Resolve AI provider: per-member override → global config → env fallback
+    let config = deployment.config().read().await;
+    let member_provider_id = crew_row.as_ref().and_then(|cm| cm.ai_provider.clone());
+    let member_model = crew_row.as_ref().and_then(|cm| cm.ai_model.clone());
+
+    let effective_provider_id =
+        member_provider_id.or_else(|| config.ai_providers.default_provider.clone());
+    let effective_model = member_model.or_else(|| config.ai_providers.default_model.clone());
+
+    // Look up the provider entry for API key / base URL
+    let provider_entry = effective_provider_id.as_ref().and_then(|pid| {
+        config
+            .ai_providers
+            .providers
+            .iter()
+            .find(|p| &p.id == pid && p.enabled)
+    });
+
+    let resolved_api_key = provider_entry
+        .and_then(|p| p.api_key.clone())
+        .or_else(|| std::env::var("ANTHROPIC_API_KEY").ok());
+    let resolved_base_url = provider_entry.and_then(|p| p.base_url.clone());
+    let resolved_model = effective_model;
+    let resolved_provider_id = effective_provider_id;
+
+    // Drop the config lock before entering the streaming path
+    drop(config);
 
     let images = request.images.as_deref();
 
-    if use_cli {
-        chat_completion_cli(pool, &request.thread_id, &history, &system_prompt, images).await
+    // If a non-CLI provider is configured, use the API backend
+    if let Some(ref pid) = resolved_provider_id {
+        // Any configured provider (anthropic, openai, google, etc.) uses the API path
+        let api_key = resolved_api_key.ok_or_else(|| {
+            ApiError::BadRequest(format!(
+                "No API key configured for provider \"{pid}\". Set it in Settings > AI Providers."
+            ))
+        })?;
+        let model = resolved_model.unwrap_or_else(|| match pid.as_str() {
+            "openai" => "gpt-4o".to_string(),
+            "google" => "gemini-2.0-flash".to_string(),
+            _ => "claude-sonnet-4-20250514".to_string(),
+        });
+        let base_url = resolved_base_url.unwrap_or_else(|| match pid.as_str() {
+            "openai" => "https://api.openai.com".to_string(),
+            "google" => "https://generativelanguage.googleapis.com".to_string(),
+            "openrouter" => "https://openrouter.ai/api".to_string(),
+            _ => "https://api.anthropic.com".to_string(),
+        });
+        chat_completion_provider_api(
+            pool,
+            &request.thread_id,
+            &history,
+            &system_prompt,
+            images,
+            pid,
+            &api_key,
+            &base_url,
+            &model,
+        )
+        .await
     } else {
-        chat_completion_anthropic_api(pool, &request.thread_id, &history, &system_prompt, images)
-            .await
+        // No provider configured — use CLI backend (default)
+        chat_completion_cli(pool, &request.thread_id, &history, &system_prompt, images).await
     }
 }
 
@@ -498,88 +564,142 @@ async fn chat_completion_cli(
         .unwrap())
 }
 
-// ── Anthropic API backend (fallback) ────────────────────────────────────────
+// ── Provider API backend (configurable) ──────────────────────────────────────
 
-async fn chat_completion_anthropic_api(
+/// Whether a provider uses the OpenAI-compatible chat/completions format
+/// or the Anthropic Messages API format.
+fn is_openai_compatible(provider_id: &str) -> bool {
+    matches!(provider_id, "openai" | "openrouter")
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn chat_completion_provider_api(
     pool: &sqlx::SqlitePool,
     thread_id: &str,
     history: &[ChatMessage],
     system_prompt: &str,
     images: Option<&[ImageAttachment]>,
+    provider_id: &str,
+    api_key: &str,
+    base_url: &str,
+    model: &str,
 ) -> Result<Response<Body>, ApiError> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
-        ApiError::BadRequest("ANTHROPIC_API_KEY environment variable is not set".to_string())
-    })?;
-
-    // For the last user message, build multipart content if images are attached
-    let non_system: Vec<&ChatMessage> =
-        history.iter().filter(|m| m.role != "system").collect();
+    let non_system: Vec<&ChatMessage> = history.iter().filter(|m| m.role != "system").collect();
     let last_idx = non_system.len().saturating_sub(1);
 
-    let messages: Vec<serde_json::Value> = non_system
-        .iter()
-        .enumerate()
-        .map(|(i, m)| {
+    let client = Client::new();
+
+    let resp = if is_openai_compatible(provider_id) {
+        // ── OpenAI-compatible format ─────────────────────────────────────
+        let mut messages = vec![serde_json::json!({
+            "role": "system",
+            "content": system_prompt,
+        })];
+        for (i, m) in non_system.iter().enumerate() {
             let content = if i == last_idx
                 && m.role == "user"
                 && images.map(|imgs| !imgs.is_empty()).unwrap_or(false)
             {
                 let imgs = images.unwrap();
-                let mut blocks: Vec<serde_json::Value> = imgs
+                let mut parts: Vec<serde_json::Value> = imgs
                     .iter()
                     .map(|img| {
                         serde_json::json!({
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": img.mime_type,
-                                "data": img.base64,
+                            "type": "image_url",
+                            "image_url": {
+                                "url": format!("data:{};base64,{}", img.mime_type, img.base64),
                             }
                         })
                     })
                     .collect();
-                blocks.push(serde_json::json!({"type": "text", "text": m.content}));
-                serde_json::json!(blocks)
+                parts.push(serde_json::json!({"type": "text", "text": m.content}));
+                serde_json::json!(parts)
             } else {
                 serde_json::json!(m.content)
             };
-            serde_json::json!({"role": m.role, "content": content})
-        })
-        .collect();
+            messages.push(serde_json::json!({"role": m.role, "content": content}));
+        }
 
-    let anthropic_body = serde_json::json!({
-        "model": "claude-sonnet-4-20250514",
-        "max_tokens": 4096,
-        "stream": true,
-        "system": system_prompt,
-        "messages": messages,
-    });
+        let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
+        client
+            .post(&url)
+            .header("Authorization", format!("Bearer {api_key}"))
+            .header("content-type", "application/json")
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": 4096,
+                "stream": true,
+                "messages": messages,
+            }))
+            .send()
+            .await
+            .map_err(|e| ApiError::BadRequest(format!("Provider API error: {e}")))?
+    } else {
+        // ── Anthropic-compatible format ──────────────────────────────────
+        let messages: Vec<serde_json::Value> = non_system
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let content = if i == last_idx
+                    && m.role == "user"
+                    && images.map(|imgs| !imgs.is_empty()).unwrap_or(false)
+                {
+                    let imgs = images.unwrap();
+                    let mut blocks: Vec<serde_json::Value> = imgs
+                        .iter()
+                        .map(|img| {
+                            serde_json::json!({
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": img.mime_type,
+                                    "data": img.base64,
+                                }
+                            })
+                        })
+                        .collect();
+                    blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+                    serde_json::json!(blocks)
+                } else {
+                    serde_json::json!(m.content)
+                };
+                serde_json::json!({"role": m.role, "content": content})
+            })
+            .collect();
 
-    let client = Client::new();
-    let anthropic_resp = client
-        .post("https://api.anthropic.com/v1/messages")
-        .header("x-api-key", &api_key)
-        .header("anthropic-version", "2023-06-01")
-        .header("content-type", "application/json")
-        .json(&anthropic_body)
-        .send()
-        .await
-        .map_err(|e| ApiError::BadRequest(format!("Anthropic API error: {e}")))?;
+        let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+        client
+            .post(&url)
+            .header("x-api-key", api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("content-type", "application/json")
+            .json(&serde_json::json!({
+                "model": model,
+                "max_tokens": 4096,
+                "stream": true,
+                "system": system_prompt,
+                "messages": messages,
+            }))
+            .send()
+            .await
+            .map_err(|e| ApiError::BadRequest(format!("Anthropic API error: {e}")))?
+    };
 
-    if !anthropic_resp.status().is_success() {
-        let status = anthropic_resp.status();
-        let body = anthropic_resp
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp
             .text()
             .await
             .unwrap_or_else(|_| "unknown error".to_string());
         return Err(ApiError::BadRequest(format!(
-            "Anthropic API returned {status}: {body}"
+            "Provider API returned {status}: {body}"
         )));
     }
 
     let pool_clone = pool.clone();
     let thread_id_owned = thread_id.to_string();
-    let byte_stream = anthropic_resp.bytes_stream();
+    let byte_stream = resp.bytes_stream();
+    let is_openai = is_openai_compatible(provider_id);
 
     let stream = async_stream::stream! {
         let mut full_text = String::new();
@@ -594,7 +714,6 @@ async fn chat_completion_anthropic_api(
                 }
             };
 
-            // Parse SSE events to accumulate text
             let text = String::from_utf8_lossy(&chunk);
             for line in text.lines() {
                 if let Some(data) = line.strip_prefix("data: ") {
@@ -602,23 +721,67 @@ async fn chat_completion_anthropic_api(
                         continue;
                     }
                     if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                        if event.get("type").and_then(|t| t.as_str())
-                            == Some("content_block_delta")
-                        {
-                            if let Some(text_delta) = event
-                                .get("delta")
-                                .and_then(|d| d.get("text"))
+                        if is_openai {
+                            // OpenAI format: choices[0].delta.content
+                            if let Some(delta_text) = event
+                                .get("choices")
+                                .and_then(|c| c.get(0))
+                                .and_then(|c| c.get("delta"))
+                                .and_then(|d| d.get("content"))
                                 .and_then(|t| t.as_str())
                             {
-                                full_text.push_str(text_delta);
+                                full_text.push_str(delta_text);
+                            }
+                        } else {
+                            // Anthropic format: content_block_delta
+                            if event.get("type").and_then(|t| t.as_str())
+                                == Some("content_block_delta")
+                            {
+                                if let Some(text_delta) = event
+                                    .get("delta")
+                                    .and_then(|d| d.get("text"))
+                                    .and_then(|t| t.as_str())
+                                {
+                                    full_text.push_str(text_delta);
+                                }
                             }
                         }
                     }
                 }
             }
 
-            // Forward raw SSE bytes to the browser
-            yield Ok(chunk);
+            if is_openai {
+                // Normalize OpenAI SSE to the Anthropic format the frontend expects
+                let text = String::from_utf8_lossy(&chunk);
+                for line in text.lines() {
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        if data == "[DONE]" { continue; }
+                        if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
+                            if let Some(delta_text) = event
+                                .get("choices")
+                                .and_then(|c| c.get(0))
+                                .and_then(|c| c.get("delta"))
+                                .and_then(|d| d.get("content"))
+                                .and_then(|t| t.as_str())
+                            {
+                                let sse_event = serde_json::json!({
+                                    "type": "content_block_delta",
+                                    "delta": { "text": delta_text }
+                                });
+                                let sse_line = format!("data: {}\n\n", sse_event);
+                                yield Ok::<_, std::io::Error>(bytes::Bytes::from(sse_line));
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Anthropic format — forward raw SSE bytes
+                yield Ok(chunk);
+            }
+        }
+
+        if is_openai {
+            yield Ok(bytes::Bytes::from("data: [DONE]\n\n"));
         }
 
         // Persist the full assistant message

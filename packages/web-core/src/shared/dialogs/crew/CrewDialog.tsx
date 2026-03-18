@@ -27,7 +27,9 @@ import {
 import { cn } from '@/shared/lib/utils';
 import { ConfirmDialog } from '@vibe/ui/components/ConfirmDialog';
 import { mcpServersApi } from '@/shared/lib/api';
+import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { BaseCodingAgent } from 'shared/types';
+import type { AiProviderEntry } from 'shared/types';
 
 type CrewSectionType = 'members';
 
@@ -41,30 +43,42 @@ const SECTION_LABELS: Record<CrewSectionType, string> = {
 
 const CREW_MEMBERS_KEY = ['local', 'crew-members'];
 
+type CrewMemberChanges = {
+  name?: string;
+  role?: string;
+  role_prompt?: string;
+  tool_access?: unknown[];
+  personality?: string;
+  avatar?: string;
+  ai_provider?: string;
+  ai_model?: string;
+};
+
+const selectClasses = cn(
+  'w-full px-2.5 py-1.5 rounded-sm text-sm',
+  'bg-primary border border-border text-high',
+  'focus:outline-none focus:ring-1 focus:ring-brand'
+);
+
 function CrewMemberEditForm({
   member,
   onSave,
   isSaving,
   mcpServerNames,
+  aiProviders,
 }: {
   member: CrewMember;
-  onSave: (
-    id: string,
-    changes: {
-      name?: string;
-      role?: string;
-      role_prompt?: string;
-      tool_access?: unknown[];
-      personality?: string;
-    }
-  ) => void;
+  onSave: (id: string, changes: CrewMemberChanges) => void;
   isSaving: boolean;
   mcpServerNames: string[];
+  aiProviders: AiProviderEntry[];
 }) {
   const [name, setName] = useState(member.name);
   const [role, setRole] = useState(member.role);
   const [rolePrompt, setRolePrompt] = useState(member.role_prompt);
   const [personality, setPersonality] = useState(member.personality);
+  const [aiProvider, setAiProvider] = useState(member.ai_provider ?? '');
+  const [aiModel, setAiModel] = useState(member.ai_model ?? '');
   const [selectedTools, setSelectedTools] = useState<string[]>(() => {
     try {
       const parsed = JSON.parse(member.tool_access);
@@ -73,6 +87,8 @@ function CrewMemberEditForm({
       return [];
     }
   });
+
+  const enabledProviders = aiProviders.filter((p) => p.enabled);
 
   const handleToolToggle = (serverName: string) => {
     setSelectedTools((prev) =>
@@ -90,6 +106,8 @@ function CrewMemberEditForm({
       role_prompt: rolePrompt,
       tool_access: selectedTools,
       personality,
+      ai_provider: aiProvider,
+      ai_model: aiModel,
     });
   };
 
@@ -170,6 +188,58 @@ function CrewMemberEditForm({
           placeholder="Communication style — e.g. blunt, friendly, sarcastic..."
         />
       </div>
+
+      {/* AI Provider Override */}
+      {enabledProviders.length > 0 && (
+        <div className="space-y-2">
+          <div>
+            <label className="block text-xs font-medium text-low mb-1">
+              AI Provider
+            </label>
+            <select
+              value={aiProvider}
+              onChange={(e) => {
+                setAiProvider(e.target.value);
+                if (!e.target.value) setAiModel('');
+              }}
+              className={selectClasses}
+            >
+              <option value="">Use global default</option>
+              {enabledProviders.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </select>
+            <p className="text-[11px] text-muted mt-0.5">
+              Override the global AI provider for this crew member.
+            </p>
+          </div>
+          {aiProvider && (
+            <div>
+              <label className="block text-xs font-medium text-low mb-1">
+                AI Model
+              </label>
+              <input
+                type="text"
+                value={aiModel}
+                onChange={(e) => setAiModel(e.target.value)}
+                className={cn(
+                  'w-full px-2.5 py-1.5 rounded-sm text-sm',
+                  'bg-primary border border-border text-high',
+                  'placeholder:text-muted',
+                  'focus:outline-none focus:ring-1 focus:ring-brand'
+                )}
+                placeholder="e.g. gpt-4o, claude-sonnet-4-20250514"
+              />
+              <p className="text-[11px] text-muted mt-0.5">
+                Specific model ID for this crew member. Leave blank for the
+                provider default.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Tool Access */}
       <div>
@@ -352,25 +422,17 @@ function CrewMemberCard({
   onSave,
   isSaving,
   mcpServerNames,
+  aiProviders,
 }: {
   member: CrewMember;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onDismiss: (id: string) => void;
   isDismissing: boolean;
-  onSave: (
-    id: string,
-    changes: {
-      name?: string;
-      role?: string;
-      role_prompt?: string;
-      tool_access?: unknown[];
-      personality?: string;
-      avatar?: string;
-    }
-  ) => void;
+  onSave: (id: string, changes: CrewMemberChanges) => void;
   isSaving: boolean;
   mcpServerNames: string[];
+  aiProviders: AiProviderEntry[];
 }) {
   const [showAvatarModal, setShowAvatarModal] = useState(false);
 
@@ -496,6 +558,7 @@ function CrewMemberCard({
             onSave={onSave}
             isSaving={isSaving}
             mcpServerNames={mcpServerNames}
+            aiProviders={aiProviders}
           />
         </div>
       )}
@@ -506,6 +569,10 @@ function CrewMemberCard({
 function MembersSection() {
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const { config } = useUserSystem();
+
+  const aiProviders: AiProviderEntry[] =
+    config?.ai_providers?.providers ?? [];
 
   const { data: members = [], isLoading } = useQuery({
     queryKey: CREW_MEMBERS_KEY,
@@ -543,14 +610,7 @@ function MembersSection() {
       changes,
     }: {
       id: string;
-      changes: {
-        name?: string;
-        role?: string;
-        role_prompt?: string;
-        tool_access?: unknown[];
-        personality?: string;
-        avatar?: string;
-      };
+      changes: CrewMemberChanges;
     }) => updateCrewMember(id, changes),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: CREW_MEMBERS_KEY });
@@ -574,17 +634,7 @@ function MembersSection() {
     deleteMutation.mutate(id);
   };
 
-  const handleSave = (
-    id: string,
-    changes: {
-      name?: string;
-      role?: string;
-      role_prompt?: string;
-      tool_access?: unknown[];
-      personality?: string;
-      avatar?: string;
-    }
-  ) => {
+  const handleSave = (id: string, changes: CrewMemberChanges) => {
     updateMutation.mutate({ id, changes });
   };
 
@@ -650,6 +700,7 @@ function MembersSection() {
               onSave={handleSave}
               isSaving={updateMutation.isPending}
               mcpServerNames={mcpServerNames}
+              aiProviders={aiProviders}
             />
           ))}
         </div>

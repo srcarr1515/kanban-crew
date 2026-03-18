@@ -15,10 +15,7 @@ pub struct TaskComment {
 }
 
 impl TaskComment {
-    pub async fn list_by_task(
-        pool: &SqlitePool,
-        task_id: Uuid,
-    ) -> Result<Vec<Self>, sqlx::Error> {
+    pub async fn list_by_task(pool: &SqlitePool, task_id: Uuid) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as::<_, TaskComment>(
             r#"SELECT id, task_id, author_type, author_name, content, created_at
                FROM task_comments

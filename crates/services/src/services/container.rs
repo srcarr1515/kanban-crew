@@ -437,11 +437,7 @@ pub trait ContainerService {
             }
         }
 
-        let author_name = ctx
-            .session
-            .executor
-            .as_deref()
-            .unwrap_or("Claude Code");
+        let author_name = ctx.session.executor.as_deref().unwrap_or("Claude Code");
 
         if let Err(e) = TaskComment::create(
             &self.db().pool,

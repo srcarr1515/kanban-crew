@@ -6,7 +6,7 @@
 
 export type Repo = { id: string, path: string, name: string, display_name: string, setup_script: string | null, cleanup_script: string | null, archive_script: string | null, copy_files: string | null, parallel_setup_script: boolean, dev_server_script: string | null, default_target_branch: string | null, default_working_dir: string | null, created_at: Date, updated_at: Date, };
 
-export type Project = { id: string, name: string, default_agent_working_dir: string | null, remote_project_id: string | null, created_at: Date, updated_at: Date, };
+export type Project = { id: string, name: string, default_agent_working_dir: string | null, remote_project_id: string | null, auto_pickup_enabled: boolean, created_at: Date, updated_at: Date, };
 
 export type UpdateRepo = { display_name?: string | null, setup_script?: string | null, cleanup_script?: string | null, archive_script?: string | null, copy_files?: string | null, parallel_setup_script?: boolean | null, dev_server_script?: string | null, default_target_branch?: string | null, default_working_dir?: string | null, };
 
@@ -470,7 +470,7 @@ export type DirectoryListResponse = { entries: Array<DirectoryEntry>, current_pa
 
 export type SearchMode = "taskform" | "settings";
 
-export type Config = { config_version: string, theme: ThemeMode, executor_profile: ExecutorProfileId, disclaimer_acknowledged: boolean, onboarding_acknowledged: boolean, remote_onboarding_acknowledged: boolean, notifications: NotificationConfig, editor: EditorConfig, github: GitHubConfig, analytics_enabled: boolean, workspace_dir: string | null, last_app_version: string | null, show_release_notes: boolean, language: UiLanguage, git_branch_prefix: string, showcases: ShowcaseState, pr_auto_description_enabled: boolean, pr_auto_description_prompt: string | null, commit_reminder_enabled: boolean, commit_reminder_prompt: string | null, send_message_shortcut: SendMessageShortcut, relay_enabled: boolean, relay_host_name: string | null, };
+export type Config = { config_version: string, theme: ThemeMode, executor_profile: ExecutorProfileId, disclaimer_acknowledged: boolean, onboarding_acknowledged: boolean, remote_onboarding_acknowledged: boolean, notifications: NotificationConfig, editor: EditorConfig, github: GitHubConfig, analytics_enabled: boolean, workspace_dir: string | null, last_app_version: string | null, show_release_notes: boolean, language: UiLanguage, git_branch_prefix: string, showcases: ShowcaseState, pr_auto_description_enabled: boolean, pr_auto_description_prompt: string | null, commit_reminder_enabled: boolean, commit_reminder_prompt: string | null, send_message_shortcut: SendMessageShortcut, relay_enabled: boolean, relay_host_name: string | null, ai_providers: AiProviderConfig, };
 
 export type NotificationConfig = { sound_enabled: boolean, push_enabled: boolean, sound_file: SoundFile, };
 
@@ -491,6 +491,42 @@ export type UiLanguage = "BROWSER" | "EN" | "FR" | "JA" | "ES" | "KO" | "ZH_HANS
 export type ShowcaseState = { seen_features: Array<string>, };
 
 export type SendMessageShortcut = "ModifierEnter" | "Enter";
+
+export type AiProviderConfig = { 
+/**
+ * The default provider id for AI operations
+ */
+default_provider?: string | null, 
+/**
+ * The default model id for AI operations
+ */
+default_model?: string | null, 
+/**
+ * Configured providers
+ */
+providers: Array<AiProviderEntry>, };
+
+export type AiProviderEntry = { 
+/**
+ * Unique provider identifier (e.g. "anthropic", "openai", "google")
+ */
+id: string, 
+/**
+ * Human-readable display name
+ */
+name: string, 
+/**
+ * API key for this provider (stored locally)
+ */
+api_key?: string | null, 
+/**
+ * Custom base URL override (for self-hosted or proxy endpoints)
+ */
+base_url?: string | null, 
+/**
+ * Whether this provider is enabled
+ */
+enabled: boolean, };
 
 export type GitBranch = { name: string, is_current: boolean, is_remote: boolean, last_commit_date: Date, };
 

@@ -155,6 +155,8 @@ export interface CrewMember {
   role_prompt: string;
   tool_access: string;
   personality: string;
+  ai_provider: string | null;
+  ai_model: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -186,6 +188,8 @@ export function updateCrewMember(
     role_prompt?: string;
     tool_access?: unknown[];
     personality?: string;
+    ai_provider?: string;
+    ai_model?: string;
   }
 ): Promise<CrewMember> {
   return localFetch<CrewMember>(`/api/local/crew-members/${id}`, {

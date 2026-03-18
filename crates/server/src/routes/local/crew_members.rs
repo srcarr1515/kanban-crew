@@ -22,6 +22,8 @@ pub struct CreateCrewMemberRequest {
     pub role_prompt: Option<String>,
     pub tool_access: Option<serde_json::Value>,
     pub personality: Option<String>,
+    pub ai_provider: Option<String>,
+    pub ai_model: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -32,6 +34,10 @@ pub struct UpdateCrewMemberRequest {
     pub role_prompt: Option<String>,
     pub tool_access: Option<serde_json::Value>,
     pub personality: Option<String>,
+    /// AI provider override. Send `""` to clear back to global default.
+    pub ai_provider: Option<String>,
+    /// AI model override. Send `""` to clear back to global default.
+    pub ai_model: Option<String>,
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
@@ -52,7 +58,7 @@ async fn list_crew_members(
     let pool = &deployment.db().pool;
 
     let members = sqlx::query_as::<_, CrewMember>(
-        "SELECT id, name, role, avatar, role_prompt, tool_access, personality, created_at, updated_at
+        "SELECT id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, created_at, updated_at
          FROM crew_members
          ORDER BY created_at ASC",
     )
@@ -83,11 +89,13 @@ async fn create_crew_member(
         .map(|v| v.to_string())
         .unwrap_or_else(|| "[]".to_string());
     let personality = request.personality.unwrap_or_default();
+    let ai_provider = request.ai_provider.filter(|s| !s.is_empty());
+    let ai_model = request.ai_model.filter(|s| !s.is_empty());
 
     let member = sqlx::query_as::<_, CrewMember>(
-        r#"INSERT INTO crew_members (id, name, role, avatar, role_prompt, tool_access, personality)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, created_at, updated_at"#,
+        r#"INSERT INTO crew_members (id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, created_at, updated_at"#,
     )
     .bind(id)
     .bind(&request.name)
@@ -96,6 +104,8 @@ async fn create_crew_member(
     .bind(&role_prompt)
     .bind(&tool_access)
     .bind(&personality)
+    .bind(&ai_provider)
+    .bind(&ai_model)
     .fetch_one(pool)
     .await?;
 
@@ -111,6 +121,20 @@ async fn update_crew_member(
 
     let tool_access_str = request.tool_access.map(|v| v.to_string());
 
+    // For nullable override fields, distinguish "not sent" (None → keep) from
+    // "sent as empty" (Some("") → clear to NULL) and "sent with value" (Some(v) → set).
+    let ai_provider_update: Option<Option<&str>> = request
+        .ai_provider
+        .as_ref()
+        .map(|s| if s.is_empty() { None } else { Some(s.as_str()) });
+    let ai_model_update: Option<Option<&str>> = request
+        .ai_model
+        .as_ref()
+        .map(|s| if s.is_empty() { None } else { Some(s.as_str()) });
+
+    // Use CASE expressions for ai_provider/ai_model so we can explicitly set NULL
+    // ?8 = 1 when the field was sent (should be updated), 0 when absent (keep existing)
+    // ?9 = the new value (NULL to clear, or the override string)
     let member = sqlx::query_as::<_, CrewMember>(
         r#"UPDATE crew_members
            SET name        = COALESCE(?, name),
@@ -119,9 +143,11 @@ async fn update_crew_member(
                role_prompt = COALESCE(?, role_prompt),
                tool_access = COALESCE(?, tool_access),
                personality = COALESCE(?, personality),
+               ai_provider = CASE WHEN ? THEN ? ELSE ai_provider END,
+               ai_model    = CASE WHEN ? THEN ? ELSE ai_model END,
                updated_at  = datetime('now', 'subsec')
            WHERE id = ?
-           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, created_at, updated_at"#,
+           RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, created_at, updated_at"#,
     )
     .bind(&request.name)
     .bind(&request.role)
@@ -129,6 +155,10 @@ async fn update_crew_member(
     .bind(&request.role_prompt)
     .bind(&tool_access_str)
     .bind(&request.personality)
+    .bind(ai_provider_update.is_some())
+    .bind(ai_provider_update.and_then(|v| v))
+    .bind(ai_model_update.is_some())
+    .bind(ai_model_update.and_then(|v| v))
     .bind(id)
     .fetch_optional(pool)
     .await?

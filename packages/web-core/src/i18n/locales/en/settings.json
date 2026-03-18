@@ -27,6 +27,8 @@
         "organizationsDesc": "Manage organization members and permissions",
         "remote-projects": "Projects",
         "remote-projectsDesc": "Manage projects",
+        "ai-providers": "AI Providers",
+        "ai-providersDesc": "Configure AI provider API keys and defaults",
         "relay": "Remote Access",
         "relayDesc": "Relay tunnel and enrollment"
       }
@@ -343,6 +345,52 @@
       "deleteConfigDialog": {
         "title": "Delete Configuration?",
         "description": "This will permanently remove \"{{configName}}\" from the {{executorType}} executor. You can't undo this action."
+      }
+    },
+    "aiProviders": {
+      "title": "AI Providers",
+      "description": "Configure AI provider API keys and default models for crew member operations.",
+      "loading": "Loading AI provider settings...",
+      "save": {
+        "success": "AI provider settings saved successfully!",
+        "error": "Failed to save AI provider settings."
+      },
+      "defaults": {
+        "title": "Default AI Configuration",
+        "description": "Set the default AI provider and model used for crew member operations. The CLI agent (e.g. Claude Code) is used by default when no provider is selected.",
+        "provider": {
+          "label": "Default Provider",
+          "helper": "Select the default AI provider for crew operations.",
+          "placeholder": "Select provider",
+          "cliAgent": "CLI Agent (Default)"
+        },
+        "model": {
+          "label": "Default Model",
+          "helper": "Specify the default model identifier for the selected provider.",
+          "placeholder": "e.g. claude-sonnet-4-20250514"
+        }
+      },
+      "providers": {
+        "title": "Configured Providers",
+        "description": "Add and manage AI provider credentials. API keys are stored locally on your machine.",
+        "add": "Add Provider",
+        "empty": "No providers configured. Add a provider to use AI-powered crew member features with direct API access.",
+        "enabled": "Enabled",
+        "remove": "Remove provider",
+        "name": {
+          "label": "Display Name",
+          "placeholder": "Enter provider name"
+        },
+        "apiKey": {
+          "label": "API Key",
+          "helper": "Your API key for this provider. Stored locally in your config file.",
+          "placeholder": "Enter API key"
+        },
+        "baseUrl": {
+          "label": "Base URL (Optional)",
+          "helper": "Override the default API endpoint. Useful for proxies or self-hosted instances.",
+          "placeholder": "https://api.example.com/v1"
+        }
       }
     },
     "mcp": {

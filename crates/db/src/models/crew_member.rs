@@ -12,6 +12,8 @@ pub struct CrewMember {
     pub role_prompt: String,
     pub tool_access: String,
     pub personality: String,
+    pub ai_provider: Option<String>,
+    pub ai_model: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -772,19 +772,11 @@ impl LocalContainerService {
                 }
             } else {
                 // Another agent claimed it, fall through to parent
-                (
-                    selected_task_title.clone(),
-                    task_description.clone(),
-                    None,
-                )
+                (selected_task_title.clone(), task_description.clone(), None)
             }
         } else {
             // No sub-tasks — regular standalone task
-            (
-                selected_task_title.clone(),
-                task_description.clone(),
-                None,
-            )
+            (selected_task_title.clone(), task_description.clone(), None)
         };
 
         // Build prompt from the task
@@ -908,7 +900,10 @@ impl LocalContainerService {
                 "in_review" => "in review",
                 _ => "completed",
             };
-            section.push_str(&format!("### Sub-task: \"{}\" ({})\n{}\n\n", title, marker, content));
+            section.push_str(&format!(
+                "### Sub-task: \"{}\" ({})\n{}\n\n",
+                title, marker, content
+            ));
         }
         section
     }
@@ -1092,10 +1087,7 @@ impl LocalContainerService {
 
             for repo in &repos {
                 let worktree_path = workspace_root.join(&repo.name);
-                let base = repo
-                    .default_target_branch
-                    .as_deref()
-                    .unwrap_or("main");
+                let base = repo.default_target_branch.as_deref().unwrap_or("main");
 
                 match git_cli.git(
                     &worktree_path,
@@ -1121,7 +1113,8 @@ impl LocalContainerService {
         };
 
         // Build the enriched prompt
-        let mut prompt = String::from("You are working on a sub-task as part of a larger effort.\n");
+        let mut prompt =
+            String::from("You are working on a sub-task as part of a larger effort.\n");
 
         if let Some(ref title) = parent_title {
             prompt.push_str(&format!("\n## Parent Task\nTitle: {title}\n"));
@@ -1153,7 +1146,7 @@ impl LocalContainerService {
         prompt.push_str(
             "\n\nThe workspace and branch were created for the parent task. \
              Previous sub-tasks have already been implemented on this branch. \
-             Build on the existing work."
+             Build on the existing work.",
         );
 
         // Start a fresh session on the existing workspace so the new sub-task

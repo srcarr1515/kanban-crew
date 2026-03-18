@@ -6,6 +6,7 @@ import { ReposSettingsSectionContent } from './ReposSettingsSection';
 import { OrganizationsSettingsSectionContent } from './OrganizationsSettingsSection';
 import { RemoteProjectsSettingsSectionContent } from './RemoteProjectsSettingsSection';
 import { AgentsSettingsSectionContent } from './AgentsSettingsSection';
+import { AiProvidersSettingsSectionContent } from './AiProvidersSettingsSection';
 import { McpSettingsSectionContent } from './McpSettingsSection';
 import { RelaySettingsSectionContent } from './RelaySettingsSection';
 
@@ -15,6 +16,7 @@ export type SettingsSectionType =
   | 'organizations'
   | 'remote-projects'
   | 'agents'
+  | 'ai-providers'
   | 'mcp'
   | 'relay';
 
@@ -27,6 +29,7 @@ export type SettingsSectionInitialState = {
     | { organizationId?: string; projectId?: string }
     | undefined;
   agents: { executor?: string; variant?: string } | undefined;
+  'ai-providers': undefined;
   mcp: undefined;
   relay: { hostId?: string } | undefined;
 };
@@ -66,6 +69,8 @@ export function SettingsSection({
         );
       case 'agents':
         return <AgentsSettingsSectionContent />;
+      case 'ai-providers':
+        return <AiProvidersSettingsSectionContent />;
       case 'mcp':
         return <McpSettingsSectionContent />;
       case 'relay':
