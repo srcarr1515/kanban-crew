@@ -48,6 +48,7 @@ export function StatusContextMenu({
         className={cn('min-w-[10rem]', contentClassName)}
         side={side}
         align={align}
+        onClick={(e) => e.stopPropagation()}
       >
         {statuses.map((status) => (
           <DropdownMenuPrimitive.Item
