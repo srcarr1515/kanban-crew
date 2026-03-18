@@ -15,7 +15,11 @@ import { taskToIssue, type LocalTask } from '@/shared/lib/local/taskAdapter';
 import { getLocalStatuses } from '@/shared/lib/local/localStatuses';
 import { localWorkspaceToRemote } from '@/shared/lib/local/workspaceAdapter';
 import { workspacesApi } from '@/shared/lib/api';
-import type { Issue, Workspace as RemoteWorkspace } from 'shared/remote-types';
+import type {
+  Issue,
+  IssueAssignee,
+  Workspace as RemoteWorkspace,
+} from 'shared/remote-types';
 import type { InsertResult, MutationResult } from '@/shared/lib/electric/types';
 import type {
   CreateIssueRequest,
@@ -207,6 +211,23 @@ export function LocalProjectProvider({
     },
   });
 
+  // ── Crew member assignee data ────────────────────────────────────────────
+
+  const issueAssignees = useMemo<IssueAssignee[]>(() => {
+    const result: IssueAssignee[] = [];
+    for (const task of tasksQuery.data ?? []) {
+      if (task.crew_member_id) {
+        result.push({
+          id: `${task.id}:${task.crew_member_id}`,
+          issue_id: task.id,
+          user_id: task.crew_member_id,
+          assigned_at: task.updated_at,
+        });
+      }
+    }
+    return result;
+  }, [tasksQuery.data]);
+
   // ── ProjectContextValue helpers ────────────────────────────────────────────
 
   const issuesById = useMemo(() => {
@@ -339,7 +360,7 @@ export function LocalProjectProvider({
       issues,
       statuses,
       tags: [],
-      issueAssignees: [],
+      issueAssignees,
       issueFollowers: [],
       issueTags: [],
       issueRelationships: [],
@@ -364,9 +385,35 @@ export function LocalProjectProvider({
       updateTag: stubMutation,
       removeTag: stubMutation,
 
-      // Relationship / assignee / follower / tag mutations — stubs
-      insertIssueAssignee: (data) => ({ data: data as never, persisted: Promise.resolve(data as never) }),
-      removeIssueAssignee: stubMutation,
+      // Assignee mutations — map to crew_member_id on the task
+      insertIssueAssignee: (data) => {
+        const optimistic = { ...data, id: data.id ?? crypto.randomUUID(), assigned_at: new Date().toISOString() } as never;
+        const persisted = updateLocalTask(data.issue_id, { crew_member_id: data.user_id })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey });
+            return optimistic;
+          });
+        // Optimistic update
+        queryClient.setQueryData<LocalTask[]>(queryKey, (old) => {
+          if (!old) return old;
+          return old.map((t) => t.id === data.issue_id ? { ...t, crew_member_id: data.user_id } : t);
+        });
+        return { data: optimistic, persisted };
+      },
+      removeIssueAssignee: (assigneeRecordId) => {
+        // assigneeRecordId format: "taskId:crewMemberId"
+        const taskId = assigneeRecordId.split(':')[0];
+        const persisted = updateLocalTask(taskId, { crew_member_id: null })
+          .then(() => {
+            queryClient.invalidateQueries({ queryKey });
+          });
+        // Optimistic update
+        queryClient.setQueryData<LocalTask[]>(queryKey, (old) => {
+          if (!old) return old;
+          return old.map((t) => t.id === taskId ? { ...t, crew_member_id: null } : t);
+        });
+        return { persisted };
+      },
       insertIssueFollower: (data) => ({ data: data as never, persisted: Promise.resolve(data as never) }),
       removeIssueFollower: stubMutation,
       insertIssueTag: (data) => ({ data: data as never, persisted: Promise.resolve(data as never) }),
@@ -377,7 +424,8 @@ export function LocalProjectProvider({
       // Lookup helpers
       getIssue,
       getIssuesForStatus,
-      getAssigneesForIssue: () => [],
+      getAssigneesForIssue: (issueId: string) =>
+        issueAssignees.filter((a) => a.issue_id === issueId),
       getFollowersForIssue: () => [],
       getTagsForIssue: () => [],
       getTagObjectsForIssue: () => [],
@@ -409,6 +457,7 @@ export function LocalProjectProvider({
       issues,
       statuses,
       workspaces,
+      issueAssignees,
       tasksQuery.isLoading,
       retry,
       insertIssue,
@@ -422,6 +471,8 @@ export function LocalProjectProvider({
       childIdsByParent,
       onBulkStatusUpdate,
       stubMutation,
+      queryClient,
+      queryKey,
     ]
   );
 

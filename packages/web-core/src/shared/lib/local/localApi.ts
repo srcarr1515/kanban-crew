@@ -75,6 +75,7 @@ export function createLocalTask(data: {
   sort_order?: number;
   parent_task_id?: string | null;
   parent_task_sort_order?: number | null;
+  crew_member_id?: string | null;
 }): Promise<LocalTask> {
   return localFetch<LocalTask>('/api/local/tasks', {
     method: 'POST',
@@ -91,6 +92,7 @@ export function updateLocalTask(
     sort_order?: number;
     parent_task_id?: string | null;
     parent_task_sort_order?: number | null;
+    crew_member_id?: string | null;
   },
 ): Promise<LocalTask> {
   return localFetch<LocalTask>(`/api/local/tasks/${id}`, {

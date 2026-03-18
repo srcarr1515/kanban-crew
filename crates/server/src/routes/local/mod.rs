@@ -39,6 +39,7 @@ pub struct LocalTask {
     pub sort_order: i64,
     pub parent_task_id: Option<Uuid>,
     pub parent_task_sort_order: Option<f64>,
+    pub crew_member_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -64,6 +65,7 @@ pub struct CreateTaskRequest {
     pub sort_order: Option<i64>,
     pub parent_task_id: Option<Uuid>,
     pub parent_task_sort_order: Option<f64>,
+    pub crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -77,6 +79,8 @@ pub struct UpdateTaskRequest {
     pub parent_task_id: Option<Option<Uuid>>,
     #[serde(default, deserialize_with = "some_if_present")]
     pub parent_task_sort_order: Option<Option<f64>>,
+    #[serde(default, deserialize_with = "some_if_present")]
+    pub crew_member_id: Option<Option<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -179,7 +183,8 @@ async fn list_tasks(
 
     let tasks = sqlx::query_as::<_, LocalTask>(
         r#"SELECT id, project_id, title, description, status, sort_order,
-                  parent_task_id, parent_task_sort_order, created_at, updated_at
+                  parent_task_id, parent_task_sort_order, crew_member_id,
+                  created_at, updated_at
            FROM tasks
            WHERE project_id = ?
            ORDER BY sort_order ASC, created_at ASC"#,
@@ -201,10 +206,11 @@ async fn create_task(
     let sort_order = request.sort_order.unwrap_or(0);
 
     let task = sqlx::query_as::<_, LocalTask>(
-        r#"INSERT INTO tasks (id, project_id, title, description, status, sort_order, parent_task_id, parent_task_sort_order)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        r#"INSERT INTO tasks (id, project_id, title, description, status, sort_order, parent_task_id, parent_task_sort_order, crew_member_id)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id, project_id, title, description, status, sort_order,
-                     parent_task_id, parent_task_sort_order, created_at, updated_at"#,
+                     parent_task_id, parent_task_sort_order, crew_member_id,
+                     created_at, updated_at"#,
     )
     .bind(id)
     .bind(request.project_id)
@@ -214,6 +220,7 @@ async fn create_task(
     .bind(sort_order)
     .bind(request.parent_task_id)
     .bind(request.parent_task_sort_order)
+    .bind(&request.crew_member_id)
     .fetch_one(pool)
     .await?;
 
@@ -236,10 +243,12 @@ async fn update_task(
                sort_order           = COALESCE(?, sort_order),
                parent_task_id       = CASE WHEN ? THEN ? ELSE parent_task_id END,
                parent_task_sort_order = CASE WHEN ? THEN ? ELSE parent_task_sort_order END,
+               crew_member_id       = CASE WHEN ? THEN ? ELSE crew_member_id END,
                updated_at           = datetime('now', 'subsec')
            WHERE id = ?
            RETURNING id, project_id, title, description, status, sort_order,
-                     parent_task_id, parent_task_sort_order, created_at, updated_at"#,
+                     parent_task_id, parent_task_sort_order, crew_member_id,
+                     created_at, updated_at"#,
     )
     .bind(&request.title)
     .bind(request.description.is_some())
@@ -250,6 +259,8 @@ async fn update_task(
     .bind(request.parent_task_id.as_ref().and_then(|v| v.as_ref()))
     .bind(request.parent_task_sort_order.is_some())
     .bind(request.parent_task_sort_order.unwrap_or(None))
+    .bind(request.crew_member_id.is_some())
+    .bind(request.crew_member_id.as_ref().and_then(|v| v.as_deref()))
     .bind(id)
     .fetch_optional(pool)
     .await?

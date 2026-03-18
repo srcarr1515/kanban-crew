@@ -35,7 +35,10 @@ use executors::{
     approvals::{ExecutorApprovalService, NoopExecutorApprovalService},
     env::{ExecutionEnv, RepoContext},
     executors::{BaseCodingAgent, CancellationToken, ExecutorExitResult, ExecutorExitSignal},
-    logs::{NormalizedEntryType, utils::patch::extract_normalized_entry_from_patch},
+    logs::{
+        NormalizedEntry, NormalizedEntryType,
+        utils::patch::{ConversationPatch, extract_normalized_entry_from_patch},
+    },
     profile::ExecutorConfig,
 };
 use futures::{FutureExt, TryStreamExt, stream::select};
@@ -506,6 +509,41 @@ impl LocalContainerService {
                 }
             };
 
+        // Override executor to OpenCode if the selected task's crew member has an ai_provider
+        let mut executor_config = executor_config;
+        let selected_task_id = pickup_result.selected_task_id;
+        {
+            let crew_member_id: Option<String> = sqlx::query_scalar(
+                "SELECT crew_member_id FROM tasks WHERE id = ?",
+            )
+            .bind(selected_task_id)
+            .fetch_optional(&self.db.pool)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(member_id) = crew_member_id {
+                if let Ok(member_uuid) = uuid::Uuid::parse_str(&member_id) {
+                    let ai_provider: Option<String> = sqlx::query_scalar(
+                        "SELECT ai_provider FROM crew_members WHERE id = ? AND ai_provider IS NOT NULL AND ai_provider != ''",
+                    )
+                    .bind(member_uuid)
+                    .fetch_optional(&self.db.pool)
+                    .await
+                    .ok()
+                    .flatten();
+
+                    if ai_provider.is_some() {
+                        tracing::info!(
+                            "Auto-pickup: task {} has crew member with ai_provider, overriding executor to OPENCODE",
+                            selected_task_id
+                        );
+                        executor_config.executor = BaseCodingAgent::Opencode;
+                    }
+                }
+            }
+        }
+
         // Get repos from the completed workspace to reuse the same repo setup
         let repos = match WorkspaceRepo::find_repos_with_target_branch_for_workspace(
             &self.db.pool,
@@ -524,8 +562,6 @@ impl LocalContainerService {
             tracing::warn!("Auto-pickup: completed workspace has no repos");
             return;
         }
-
-        let selected_task_id = pickup_result.selected_task_id;
         let selected_task_title = pickup_result.selected_task_title;
         let parent_task_id = pickup_result.parent_task_id;
 
@@ -1250,6 +1286,11 @@ impl LocalContainerService {
             }
 
             if let Ok(ctx) = ExecutionProcess::load_context(&db.pool, exec_id).await {
+                // Clean up per-workspace .opencode.json config file
+                if let Some(ref container_ref) = ctx.workspace.container_ref {
+                    cleanup_opencode_config(Path::new(container_ref)).await;
+                }
+
                 // Update executor session summary if available
                 if let Err(e) = container.update_executor_session_summary(&exec_id).await {
                     tracing::warn!("Failed to update executor session summary: {}", e);
@@ -2086,6 +2127,7 @@ impl ContainerService for LocalContainerService {
             .commit_reminder_prompt
             .clone()
             .unwrap_or_else(|| DEFAULT_COMMIT_REMINDER_PROMPT.to_string());
+        let ai_providers = config.ai_providers.clone();
         drop(config);
         let mut env = ExecutionEnv::new(
             repo_context,
@@ -2096,6 +2138,80 @@ impl ContainerService for LocalContainerService {
         // Always inject workspace/session context
         env.insert("VK_WORKSPACE_ID", workspace.id.to_string());
         env.insert("VK_WORKSPACE_BRANCH", &workspace.branch);
+
+        // Bridge crew member AI provider settings to env vars for OpenCode
+        let mut crew_provider_label: Option<String> = None;
+        if let Some(task_id) = &workspace.task_id {
+            let crew_row: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                "SELECT cm.ai_provider, cm.ai_model \
+                 FROM tasks t \
+                 JOIN crew_members cm ON cm.id = t.crew_member_id \
+                 WHERE t.id = ?",
+            )
+            .bind(task_id)
+            .fetch_optional(&self.db.pool)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some((Some(provider), model)) = crew_row {
+                // Build a display label for the UI (e.g. "anthropic / claude-opus-4-6")
+                crew_provider_label = Some(match &model {
+                    Some(m) => format!("{} / {}", provider, m),
+                    None => provider.clone(),
+                });
+                let env_var_name = match provider.as_str() {
+                    "openrouter" => Some("OPENROUTER_API_KEY"),
+                    "anthropic" => Some("ANTHROPIC_API_KEY"),
+                    "openai" => Some("OPENAI_API_KEY"),
+                    "google" => Some("GEMINI_API_KEY"),
+                    _ => {
+                        tracing::warn!("Unknown ai_provider '{}' for crew member, skipping API key injection", provider);
+                        None
+                    }
+                };
+
+                let mut resolved_api_key: Option<String> = None;
+
+                if let Some(env_key) = env_var_name {
+                    // Look up the API key from configured providers
+                    if let Some(api_key) = ai_providers
+                        .providers
+                        .iter()
+                        .find(|p| p.id == provider && p.enabled)
+                        .and_then(|p| p.api_key.clone())
+                    {
+                        tracing::info!(
+                            "Injecting {} for crew member ai_provider '{}'",
+                            env_key,
+                            provider
+                        );
+                        resolved_api_key = Some(api_key.clone());
+                        env.insert(env_key, api_key);
+                    } else {
+                        tracing::warn!(
+                            "No API key configured for provider '{}', checking environment",
+                            provider
+                        );
+                    }
+                }
+
+                if let Some(ref model) = model {
+                    tracing::info!("Injecting OPENCODE_MODEL '{}' for crew member", model);
+                    env.insert("OPENCODE_MODEL", model);
+                }
+
+                // Write per-workspace .opencode.json so OpenCode picks up the
+                // correct provider/model without requiring global config.
+                write_opencode_config(
+                    &current_dir,
+                    &provider,
+                    resolved_api_key.as_deref(),
+                    model.as_deref(),
+                )
+                .await;
+            }
+        }
 
         // Create the child and stream, add to execution tracker with timeout
         let mut spawned = tokio::time::timeout(
@@ -2111,6 +2227,21 @@ impl ContainerService for LocalContainerService {
 
         self.track_child_msgs_in_store(execution_process.id, &mut spawned.child)
             .await;
+
+        // Surface provider/model info as the first normalized entry in the log stream
+        if let Some(label) = crew_provider_label {
+            if let Some(store) = self.msg_stores.read().await.get(&execution_process.id) {
+                store.push_patch(ConversationPatch::add_normalized_entry(
+                    0,
+                    NormalizedEntry {
+                        timestamp: None,
+                        entry_type: NormalizedEntryType::SystemMessage,
+                        content: format!("Using {}", label),
+                        metadata: None,
+                    },
+                ));
+            }
+        }
 
         self.add_child_to_store(execution_process.id, spawned.child)
             .await;
@@ -2195,6 +2326,21 @@ impl ContainerService for LocalContainerService {
             "Execution process {} stopped successfully",
             execution_process.id
         );
+
+        // Clean up per-workspace .opencode.json config file
+        let workspace_dir: Option<String> = sqlx::query_scalar(
+            "SELECT w.container_ref FROM sessions s \
+             JOIN workspaces w ON w.id = s.workspace_id \
+             WHERE s.id = ?",
+        )
+        .bind(execution_process.session_id)
+        .fetch_optional(&self.db.pool)
+        .await
+        .ok()
+        .flatten();
+        if let Some(dir) = workspace_dir {
+            cleanup_opencode_config(Path::new(&dir)).await;
+        }
 
         // Record after-head commit OID (best-effort)
         self.update_after_head_commits(execution_process.id).await;
@@ -2358,6 +2504,65 @@ impl ContainerService for LocalContainerService {
         Ok(())
     }
 }
+/// Write a per-workspace `.opencode.json` config file so OpenCode picks up the
+/// correct provider and model without requiring global configuration.
+async fn write_opencode_config(
+    workspace_dir: &Path,
+    provider: &str,
+    api_key: Option<&str>,
+    model: Option<&str>,
+) {
+    let mut config = serde_json::Map::new();
+    config.insert("provider".to_string(), json!(provider));
+
+    if let Some(model) = model {
+        config.insert("model".to_string(), json!(model));
+    }
+
+    // Map provider to the corresponding API key env var name and inject it
+    // so OpenCode can discover the key from the config file.
+    if let Some(api_key) = api_key {
+        let env_key = match provider {
+            "openrouter" => Some("OPENROUTER_API_KEY"),
+            "anthropic" => Some("ANTHROPIC_API_KEY"),
+            "openai" => Some("OPENAI_API_KEY"),
+            "google" => Some("GEMINI_API_KEY"),
+            _ => None,
+        };
+        if let Some(env_key) = env_key {
+            let mut env_map = serde_json::Map::new();
+            env_map.insert(env_key.to_string(), json!(api_key));
+            config.insert("env".to_string(), serde_json::Value::Object(env_map));
+        }
+    }
+
+    let config_path = workspace_dir.join(".opencode.json");
+    match serde_json::to_string_pretty(&config) {
+        Ok(content) => {
+            if let Err(e) = tokio::fs::write(&config_path, content).await {
+                tracing::warn!("Failed to write .opencode.json to {}: {}", config_path.display(), e);
+            } else {
+                tracing::info!("Wrote per-workspace .opencode.json to {}", config_path.display());
+            }
+        }
+        Err(e) => {
+            tracing::warn!("Failed to serialize .opencode.json config: {}", e);
+        }
+    }
+}
+
+/// Remove the per-workspace `.opencode.json` config file created before execution.
+async fn cleanup_opencode_config(workspace_dir: &Path) {
+    let config_path = workspace_dir.join(".opencode.json");
+    if config_path.exists() {
+        if let Err(e) = tokio::fs::remove_file(&config_path).await {
+            tracing::warn!("Failed to clean up .opencode.json at {}: {}", config_path.display(), e);
+        } else {
+            tracing::debug!("Cleaned up per-workspace .opencode.json at {}", config_path.display());
+        }
+    }
+}
+
 fn success_exit_status() -> std::process::ExitStatus {
     #[cfg(unix)]
     {

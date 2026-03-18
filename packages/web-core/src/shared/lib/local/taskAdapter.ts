@@ -14,6 +14,7 @@ export interface LocalTask {
   sort_order: number;
   parent_task_id: string | null;
   parent_task_sort_order: number | null;
+  crew_member_id: string | null;
   created_at: string;
   updated_at: string;
 }

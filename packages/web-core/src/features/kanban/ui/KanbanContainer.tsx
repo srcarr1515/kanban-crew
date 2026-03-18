@@ -1524,10 +1524,18 @@ export function KanbanContainer() {
   );
 
   const handleCardAssigneeClick = useCallback(
-    (issueId: string) => {
-      openAssigneeSelection(projectId, [issueId]);
+    async (issueId: string) => {
+      if (IS_LOCAL_MODE) {
+        const { CrewMemberAssigneeDialog } = await import(
+          '@/shared/dialogs/kanban/CrewMemberAssigneeDialog'
+        );
+        await CrewMemberAssigneeDialog.show({ taskId: issueId });
+        queryClient.invalidateQueries({ queryKey: ['local', 'tasks', projectId] });
+      } else {
+        openAssigneeSelection(projectId, [issueId]);
+      }
     },
-    [projectId, openAssigneeSelection]
+    [projectId, openAssigneeSelection, queryClient]
   );
 
   const handleCardMoreActionsClick = useCallback(

@@ -6,6 +6,7 @@ use db::models::{
     workspace::{CreateWorkspace, Workspace},
 };
 use deployment::Deployment;
+use executors::executors::BaseCodingAgent;
 use services::services::container::ContainerService;
 use utils::response::ApiResponse;
 use uuid::Uuid;
@@ -106,6 +107,10 @@ pub async fn create_and_start_workspace(
 
         Workspace::link_to_task(pool, workspace_id, task_id).await?;
 
+        // Sync the in-memory workspace so the container can resolve
+        // crew member AI settings via workspace.task_id.
+        managed_workspace.workspace.task_id = Some(task_id);
+
         // Auto-transition task from 'todo' or 'ready' to 'in_progress'
         sqlx::query(
             "UPDATE tasks SET status = 'in_progress', updated_at = datetime('now', 'subsec') WHERE id = ? AND status IN ('todo', 'ready')"
@@ -150,6 +155,41 @@ pub async fn create_and_start_workspace(
                     linked_issue.issue_id,
                     e
                 );
+            }
+        }
+    }
+
+    // Override executor to OpenCode if the task's crew member has an ai_provider set
+    let mut executor_config = executor_config;
+    if let Some(linked_issue) = &linked_issue {
+        let pool = &deployment.db().pool;
+        let crew_member_id: Option<String> = sqlx::query_scalar(
+            "SELECT crew_member_id FROM tasks WHERE id = ?",
+        )
+        .bind(linked_issue.issue_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten();
+
+        if let Some(member_id) = crew_member_id {
+            if let Ok(member_uuid) = Uuid::parse_str(&member_id) {
+                let ai_provider: Option<String> = sqlx::query_scalar(
+                    "SELECT ai_provider FROM crew_members WHERE id = ? AND ai_provider IS NOT NULL AND ai_provider != ''",
+                )
+                .bind(member_uuid)
+                .fetch_optional(pool)
+                .await
+                .ok()
+                .flatten();
+
+                if ai_provider.is_some() {
+                    tracing::info!(
+                        "Task {} has crew member with ai_provider, overriding executor to OPENCODE",
+                        linked_issue.issue_id
+                    );
+                    executor_config.executor = BaseCodingAgent::Opencode;
+                }
             }
         }
     }

@@ -4,9 +4,13 @@ import { OrgContext, type OrgContextValue } from '@/shared/hooks/useOrgContext';
 import {
   listLocalProjects,
   createLocalProject,
+  listCrewMembers,
   type LocalProject,
+  type CrewMember,
 } from '@/shared/lib/local/localApi';
 import type { Project } from 'shared/remote-types';
+import { MemberRole } from 'shared/types';
+import type { OrganizationMemberWithProfile } from 'shared/types';
 import type { InsertResult, MutationResult } from '@/shared/lib/electric/types';
 
 /** Synthetic org ID used in local mode (no real cloud org exists). */
@@ -29,12 +33,31 @@ interface LocalOrgProviderProps {
   children: ReactNode;
 }
 
+/** Map a crew member to the OrganizationMemberWithProfile shape used by KanbanContainer. */
+function crewMemberToOrgMember(cm: CrewMember): OrganizationMemberWithProfile {
+  return {
+    user_id: cm.id,
+    role: MemberRole.MEMBER,
+    joined_at: cm.created_at,
+    first_name: cm.name,
+    last_name: null,
+    username: cm.role,
+    email: null,
+    avatar_url: null,
+  };
+}
+
 export function LocalOrgProvider({ children }: LocalOrgProviderProps) {
   const queryClient = useQueryClient();
 
   const projectsQuery = useQuery({
     queryKey: ['local', 'projects'],
     queryFn: listLocalProjects,
+  });
+
+  const crewMembersQuery = useQuery({
+    queryKey: ['local', 'crew-members'],
+    queryFn: listCrewMembers,
   });
 
   const projects = useMemo<Project[]>(
@@ -90,6 +113,14 @@ export function LocalOrgProvider({ children }: LocalOrgProviderProps) {
     projectsQuery.refetch();
   }, [projectsQuery]);
 
+  const membersWithProfilesById = useMemo(() => {
+    const map = new Map<string, OrganizationMemberWithProfile>();
+    for (const cm of crewMembersQuery.data ?? []) {
+      map.set(cm.id, crewMemberToOrgMember(cm));
+    }
+    return map;
+  }, [crewMembersQuery.data]);
+
   const value = useMemo<OrgContextValue>(
     () => ({
       organizationId: LOCAL_ORG_ID,
@@ -102,7 +133,7 @@ export function LocalOrgProvider({ children }: LocalOrgProviderProps) {
       removeProject: noop,
       getProject,
       projectsById,
-      membersWithProfilesById: new Map(),
+      membersWithProfilesById,
     }),
     [
       projects,
@@ -112,6 +143,7 @@ export function LocalOrgProvider({ children }: LocalOrgProviderProps) {
       noop,
       getProject,
       projectsById,
+      membersWithProfilesById,
     ]
   );
 
