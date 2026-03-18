@@ -1417,6 +1417,40 @@ export function KanbanContainer() {
         .then(() => {
           if (IS_LOCAL_MODE && isCrossColumn && movedIssueId) {
             const id = movedIssueId;
+            // When parent with sub-tasks is moved to "ready", offer to
+            // set all sub-tasks to "ready" as well.
+            if (destId === 'ready') {
+              const issue = issuesById.get(id);
+              if (issue) {
+                const subTasks = issues.filter(
+                  (i) => i.parent_issue_id === id && i.status_id === 'todo'
+                );
+                if (subTasks.length > 0) {
+                  ConfirmDialog.show({
+                    title: 'Set Sub-tasks to Ready?',
+                    message: `"${issue.title}" has ${subTasks.length} sub-task${subTasks.length !== 1 ? 's' : ''} still in To Do. Set them all to Ready?`,
+                    confirmText: 'Set to Ready',
+                    cancelText: 'No, just the parent',
+                    variant: 'default',
+                  }).then((result) => {
+                    if (result === 'confirmed') {
+                      const subUpdates = subTasks.map((t) => ({
+                        id: t.id,
+                        changes: { status_id: 'ready' },
+                      }));
+                      const handler = onBulkStatusUpdateRef.current;
+                      if (handler) {
+                        handler(subUpdates).then(() => {
+                          queryClient.invalidateQueries({
+                            queryKey: ['local', 'tasks'],
+                          });
+                        });
+                      }
+                    }
+                  });
+                }
+              }
+            }
             // Auto-create workspace when task is dragged to "in_progress"
             if (destId === 'in_progress') {
               // Chain: parent with sub-tasks → sub-task reuse → default auto-create
