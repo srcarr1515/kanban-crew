@@ -8,11 +8,8 @@ import {
 import {
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
-  CircleNotchIcon,
   PaperclipIcon,
-  PaperPlaneRightIcon,
   PlusIcon,
-  StopIcon,
   TrashIcon,
   XIcon,
 } from '@phosphor-icons/react';
@@ -33,6 +30,7 @@ import { listCrewMembers } from '@/shared/lib/local/localApi';
 import {
   ChatToolbar,
   type ChatToolbarCrewMemberProps,
+  type ChatToolbarFileUploadProps,
 } from '@vibe/ui/components/ChatToolbar';
 import { ChatMessageBubble, StreamingMessage } from './ChatMessage';
 import { useChatStore } from './useChatStore';
@@ -52,8 +50,6 @@ export function ChatPanel() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [visionFallback, setVisionFallback] = useState<VisionFallbackInfo | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef(false);
 
   // ── Crew members ──────────────────────────────────────────────
@@ -82,11 +78,6 @@ export function ChatPanel() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent, optimisticText]);
-
-  // Focus input when thread changes
-  useEffect(() => {
-    inputRef.current?.focus();
-  }, [activeThreadId]);
 
   // Restore crew member selection from locked thread when switching threads
   useEffect(() => {
@@ -263,16 +254,6 @@ export function ChatPanel() {
     }
   }, [input, attachments, activeThreadId, isStreaming, selectedCrewId, queryClient, threads, crewMembers, projectId]);
 
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent) => {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        handleSend();
-      }
-    },
-    [handleSend]
-  );
-
   const activeThread = threads.find((t) => t.id === activeThreadId);
   const isCrewLocked = !!activeThread?.crew_member_id;
   const lockedCrewMember = isCrewLocked
@@ -293,6 +274,13 @@ export function ChatPanel() {
       locked: isCrewLocked,
     };
   }, [crewMembers, selectedCrewId, isCrewLocked]);
+
+  const fileUploadProp = useMemo<ChatToolbarFileUploadProps>(() => ({
+    onAttachFiles: (files: File[]) => processFiles(files),
+    accept: 'image/*',
+    attachLabel: 'Attach image',
+    disabled: !activeThreadId || isStreaming,
+  }), [processFiles, activeThreadId, isStreaming]);
 
   return (
     <div
@@ -423,92 +411,42 @@ export function ChatPanel() {
         </div>
       )}
 
+      {/* Attachment thumbnails */}
+      {attachments.length > 0 && (
+        <div className="shrink-0 border-t px-3 pt-2 flex flex-wrap gap-2">
+          {attachments.map((att) => (
+            <div key={att.id} className="relative group">
+              <img
+                src={att.dataUrl}
+                alt={att.name}
+                className="h-16 w-16 object-cover rounded-md border border-border"
+              />
+              <button
+                type="button"
+                onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                className="absolute -top-1 -right-1 size-4 rounded-full bg-panel border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                title="Remove"
+              >
+                <XIcon className="size-2.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Input area */}
-      <div className="shrink-0 border-t p-2 space-y-2">
+      <div className="shrink-0 border-t p-2">
         <ChatToolbar
           crewMember={crewMemberProp}
-          editorNode={
-            <div className="space-y-2">
-              {/* Attachment thumbnails */}
-              {attachments.length > 0 && (
-                <div className="flex flex-wrap gap-2 px-1">
-                  {attachments.map((att) => (
-                    <div key={att.id} className="relative group">
-                      <img
-                        src={att.dataUrl}
-                        alt={att.name}
-                        className="h-16 w-16 object-cover rounded-md border border-border"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
-                        className="absolute -top-1 -right-1 size-4 rounded-full bg-panel border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                        title="Remove"
-                      >
-                        <XIcon className="size-2.5" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="flex items-end gap-2">
-                {/* Hidden file input */}
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    processFiles(Array.from(e.target.files ?? []));
-                    e.target.value = '';
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={!activeThreadId || isStreaming}
-                  className="shrink-0 p-2 text-low hover:text-normal hover:bg-secondary rounded-lg transition-colors disabled:opacity-40"
-                  title="Attach image"
-                >
-                  <PaperclipIcon className="size-4" />
-                </button>
-                <textarea
-                  ref={inputRef}
-                  value={input}
-                  onChange={(e) => setInput(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  placeholder={activeThreadId ? 'Ask anything...' : 'Create a thread to start'}
-                  disabled={!activeThreadId || isStreaming}
-                  rows={4}
-                  className="flex-1 resize-none rounded-lg border bg-secondary px-3 py-2 text-sm text-high placeholder:text-low focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-50"
-                />
-                <button
-                  type="button"
-                  onClick={isStreaming ? () => { abortRef.current = true; } : handleSend}
-                  disabled={!isStreaming && ((!input.trim() && attachments.length === 0) || !activeThreadId)}
-                  className={`shrink-0 rounded-lg p-2 text-white transition-colors ${
-                    isStreaming
-                      ? 'bg-brand hover:bg-red-500'
-                      : 'bg-brand hover:bg-brand/90 disabled:opacity-40'
-                  }`}
-                  title={isStreaming ? 'Stop generating' : 'Send'}
-                >
-                  {isStreaming ? (
-                    <span className="relative flex size-4 items-center justify-center">
-                      <CircleNotchIcon className="size-4 animate-spin" weight="bold" />
-                      <StopIcon className="absolute size-2" weight="fill" />
-                    </span>
-                  ) : (
-                    <PaperPlaneRightIcon className="size-4" weight="fill" />
-                  )}
-                </button>
-              </div>
-            </div>
-          }
+          fileUpload={fileUploadProp}
+          editor={{
+            value: input,
+            onChange: (v) => setInput(v),
+            onCmdEnter: handleSend,
+            placeholder: activeThreadId ? 'Ask anything...' : 'Create a thread to start',
+            disabled: !activeThreadId || isStreaming,
+          }}
           disabled={!activeThreadId || isStreaming}
-          className="border-0 rounded-none bg-transparent"
         />
       </div>
     </div>
