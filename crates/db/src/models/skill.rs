@@ -11,6 +11,7 @@ pub struct Skill {
     pub description: String,
     pub trigger_description: String,
     pub content: String,
+    pub is_system: bool,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -18,7 +19,7 @@ pub struct Skill {
 impl Skill {
     pub async fn list(pool: &SqlitePool) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as::<_, Skill>(
-            r#"SELECT id, name, description, trigger_description, content, created_at, updated_at
+            r#"SELECT id, name, description, trigger_description, content, is_system, created_at, updated_at
                FROM skills
                ORDER BY name ASC"#,
         )
@@ -28,7 +29,7 @@ impl Skill {
 
     pub async fn get_by_id(pool: &SqlitePool, id: &str) -> Result<Self, sqlx::Error> {
         sqlx::query_as::<_, Skill>(
-            r#"SELECT id, name, description, trigger_description, content, created_at, updated_at
+            r#"SELECT id, name, description, trigger_description, content, is_system, created_at, updated_at
                FROM skills
                WHERE id = ?"#,
         )
@@ -39,7 +40,7 @@ impl Skill {
 
     pub async fn get_by_name(pool: &SqlitePool, name: &str) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as::<_, Skill>(
-            r#"SELECT id, name, description, trigger_description, content, created_at, updated_at
+            r#"SELECT id, name, description, trigger_description, content, is_system, created_at, updated_at
                FROM skills
                WHERE name = ?"#,
         )
@@ -54,18 +55,20 @@ impl Skill {
         description: &str,
         trigger_description: &str,
         content: &str,
+        is_system: bool,
     ) -> Result<Self, sqlx::Error> {
         let id = Uuid::new_v4().to_string();
         sqlx::query_as::<_, Skill>(
-            r#"INSERT INTO skills (id, name, description, trigger_description, content)
-               VALUES (?, ?, ?, ?, ?)
-               RETURNING id, name, description, trigger_description, content, created_at, updated_at"#,
+            r#"INSERT INTO skills (id, name, description, trigger_description, content, is_system)
+               VALUES (?, ?, ?, ?, ?, ?)
+               RETURNING id, name, description, trigger_description, content, is_system, created_at, updated_at"#,
         )
         .bind(&id)
         .bind(name)
         .bind(description)
         .bind(trigger_description)
         .bind(content)
+        .bind(is_system)
         .fetch_one(pool)
         .await
     }
@@ -77,18 +80,20 @@ impl Skill {
         description: &str,
         trigger_description: &str,
         content: &str,
+        is_system: bool,
     ) -> Result<Self, sqlx::Error> {
         sqlx::query_as::<_, Skill>(
             r#"UPDATE skills
                SET name = ?, description = ?, trigger_description = ?, content = ?,
-                   updated_at = datetime('now', 'subsec')
+                   is_system = ?, updated_at = datetime('now', 'subsec')
                WHERE id = ?
-               RETURNING id, name, description, trigger_description, content, created_at, updated_at"#,
+               RETURNING id, name, description, trigger_description, content, is_system, created_at, updated_at"#,
         )
         .bind(name)
         .bind(description)
         .bind(trigger_description)
         .bind(content)
+        .bind(is_system)
         .bind(id)
         .fetch_one(pool)
         .await

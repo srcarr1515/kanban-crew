@@ -207,7 +207,6 @@ export function updateCrewMember(
     personality?: string;
     ai_provider?: string;
     ai_model?: string;
-    skills?: string[] | null;
     can_create_workspace?: boolean;
     can_merge_workspace?: boolean;
     can_propose_tasks?: boolean;
@@ -224,6 +223,35 @@ export function deleteCrewMember(id: string): Promise<void> {
   return localFetch<void>(`/api/local/crew-members/${id}`, {
     method: 'DELETE',
   });
+}
+
+// ── Crew Member Skills ────────────────────────────────────────────────────────
+
+export interface CrewMemberSkillEntry {
+  crew_member_id: string;
+  skill_id: string;
+  sort_order: number;
+}
+
+export function listCrewMemberSkills(
+  crewMemberId: string
+): Promise<import('@/shared/lib/api').SkillEntry[]> {
+  return localFetch<import('@/shared/lib/api').SkillEntry[]>(
+    `/api/local/crew-members/${encodeURIComponent(crewMemberId)}/skills`
+  );
+}
+
+export function replaceCrewMemberSkills(
+  crewMemberId: string,
+  skills: { skill_id: string; sort_order?: number }[]
+): Promise<CrewMemberSkillEntry[]> {
+  return localFetch<CrewMemberSkillEntry[]>(
+    `/api/local/crew-members/${encodeURIComponent(crewMemberId)}/skills`,
+    {
+      method: 'PUT',
+      body: JSON.stringify({ skills }),
+    }
+  );
 }
 
 // ── Task Comments ────────────────────────────────────────────────────────────

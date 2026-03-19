@@ -25,6 +25,7 @@ pub struct SkillEntry {
     pub description: String,
     pub trigger_description: String,
     pub content: String,
+    pub is_system: bool,
     /// "disk" for built-in defaults, "database" for user-created.
     pub source: String,
 }
@@ -37,6 +38,7 @@ pub struct CreateSkillRequest {
     pub description: Option<String>,
     pub trigger_description: Option<String>,
     pub content: Option<String>,
+    pub is_system: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -45,6 +47,7 @@ pub struct UpdateSkillRequest {
     pub description: Option<String>,
     pub trigger_description: Option<String>,
     pub content: Option<String>,
+    pub is_system: Option<bool>,
 }
 
 // ── Router ──────────────────────────────────────────────────────────────────
@@ -84,6 +87,7 @@ async fn list_skills(
                 description: disk.description.clone(),
                 trigger_description: disk.trigger_description.clone(),
                 content: disk.content.clone(),
+                is_system: true,
                 source: "disk".to_string(),
             });
         }
@@ -97,6 +101,7 @@ async fn list_skills(
             description: skill.description,
             trigger_description: skill.trigger_description,
             content: skill.content,
+            is_system: skill.is_system,
             source: "database".to_string(),
         });
     }
@@ -133,6 +138,7 @@ async fn create_skill(
         &request.description.unwrap_or_default(),
         &request.trigger_description.unwrap_or_default(),
         &request.content.unwrap_or_default(),
+        request.is_system.unwrap_or(false),
     )
     .await?;
 
@@ -156,6 +162,7 @@ async fn update_skill(
         .trigger_description
         .unwrap_or(existing.trigger_description);
     let content = request.content.unwrap_or(existing.content);
+    let is_system = request.is_system.unwrap_or(existing.is_system);
 
     if name.trim().is_empty() {
         return Err(ApiError::BadRequest("Skill name cannot be empty".into()));
@@ -168,18 +175,27 @@ async fn update_skill(
         &description,
         &trigger_description,
         &content,
+        is_system,
     )
     .await?;
 
     Ok(ResponseJson(ApiResponse::success(skill)))
 }
 
-/// Delete a user skill by ID.
+/// Delete a user skill by ID. System skills cannot be deleted.
 async fn delete_skill(
     State(deployment): State<DeploymentImpl>,
     Path(id): Path<String>,
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let pool = &deployment.db().pool;
+
+    let skill = Skill::get_by_id(pool, &id).await?;
+    if skill.is_system {
+        return Err(ApiError::Forbidden(
+            "System skills cannot be deleted".into(),
+        ));
+    }
+
     Skill::delete(pool, &id).await?;
     Ok(ResponseJson(ApiResponse::success(())))
 }

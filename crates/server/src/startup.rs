@@ -3,7 +3,7 @@ use services::services::container::ContainerService;
 use tokio_util::sync::CancellationToken;
 use utils::assets::asset_dir;
 
-use crate::{DeploymentImpl, tunnel};
+use crate::{DeploymentImpl, skill_registry::SkillRegistry, tunnel};
 
 /// A running server instance. Callers can read the port, then call `serve()`
 /// to run the server until the shutdown token is cancelled.
@@ -162,6 +162,12 @@ pub async fn initialize_deployment() -> Result<DeploymentImpl, DeploymentError> 
     deployment
         .track_if_analytics_allowed("session_start", serde_json::json!({}))
         .await;
+
+    // Seed built-in system skills into the database
+    let registry = SkillRegistry::load();
+    if let Err(e) = registry.seed_system_skills(&deployment.db().pool).await {
+        tracing::error!("Failed to seed system skills: {}", e);
+    }
 
     // Preload global executor options cache for all executors with DEFAULT presets
     tokio::spawn(async move {

@@ -376,6 +376,7 @@ function SkillForm({
     skill?.trigger_description ?? ''
   );
   const [content, setContent] = useState(skill?.content ?? '');
+  const [dragOver, setDragOver] = useState(false);
 
   const isEdit = skill !== null && skill.id !== null;
 
@@ -412,27 +413,6 @@ function SkillForm({
     }
   };
 
-  const handleFileDrop = useCallback(
-    (e: React.DragEvent) => {
-      e.preventDefault();
-      const file = e.dataTransfer.files[0];
-      if (file && file.name.endsWith('.md')) {
-        readFile(file);
-      }
-    },
-    []
-  );
-
-  const handleFileSelect = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (file) {
-        readFile(file);
-      }
-    },
-    []
-  );
-
   const readFile = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -446,23 +426,41 @@ function SkillForm({
         const frontmatter = frontmatterMatch[1];
         const body = frontmatterMatch[2];
 
+        const nameMatch = frontmatter.match(/name:\s*(.+)/);
         const descMatch = frontmatter.match(/description:\s*(.+)/);
         const triggerMatch = frontmatter.match(/trigger_description:\s*(.+)/);
 
-        if (descMatch && !description) setDescription(descMatch[1].trim());
-        if (triggerMatch && !triggerDescription)
-          setTriggerDescription(triggerMatch[1].trim());
+        if (nameMatch) setName((prev) => prev || nameMatch[1].trim());
+        if (descMatch) setDescription((prev) => prev || descMatch[1].trim());
+        if (triggerMatch)
+          setTriggerDescription(
+            (prev) => prev || triggerMatch[1].trim()
+          );
         setContent(body.trim());
       } else {
         setContent(text);
       }
 
-      // Use filename as name if empty
-      if (!name) {
-        setName(file.name.replace(/\.md$/, ''));
-      }
+      // Use filename as name if still empty
+      setName((prev) => prev || file.name.replace(/\.md$/, ''));
     };
     reader.readAsText(file);
+  };
+
+  const handleFileDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if (file && file.name.endsWith('.md')) {
+      readFile(file);
+    }
+  };
+
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      readFile(file);
+    }
   };
 
   return (
@@ -536,12 +534,20 @@ function SkillForm({
             e.preventDefault();
             e.stopPropagation();
           }}
+          onDragEnter={(e) => {
+            e.preventDefault();
+            setDragOver(true);
+          }}
+          onDragLeave={() => setDragOver(false)}
           onDrop={handleFileDrop}
           onClick={() => fileInputRef.current?.click()}
           className={cn(
-            'border-2 border-dashed border-border rounded-sm p-4',
+            'border-2 border-dashed rounded-sm p-4',
             'flex items-center justify-center gap-2 cursor-pointer',
-            'text-sm text-low hover:border-brand/50 hover:text-normal transition-colors'
+            'text-sm transition-colors',
+            dragOver
+              ? 'border-brand bg-brand/5 text-normal'
+              : 'border-border text-low hover:border-brand/50 hover:text-normal'
           )}
         >
           <UploadSimpleIcon className="size-icon-sm" weight="bold" />

@@ -1,7 +1,5 @@
-use std::sync::Arc;
-
 use axum::{
-    Extension, Router,
+    Router,
     body::Body,
     extract::{Json, Path, Query, State},
     response::{Json as ResponseJson, Response},
@@ -17,7 +15,7 @@ use tokio::io::AsyncBufReadExt;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
-use crate::{DeploymentImpl, error::ApiError, skill_registry::SkillRegistry};
+use crate::{DeploymentImpl, error::ApiError};
 
 // ── DB types ────────────────────────────────────────────────────────────────
 
@@ -250,7 +248,6 @@ When filtering by a known UUID string like 'abc-123-...', use the tasks/projects
 
 async fn chat_completion(
     State(deployment): State<DeploymentImpl>,
-    Extension(skill_registry): Extension<Arc<SkillRegistry>>,
     Json(request): Json<SendMessageRequest>,
 ) -> Result<Response<Body>, ApiError> {
     let pool = &deployment.db().pool;
@@ -312,7 +309,6 @@ async fn chat_completion(
         personality: String,
         ai_provider: Option<String>,
         ai_model: Option<String>,
-        skills: Option<String>,
     }
 
     // Resolve effective crew_member_id: request param → thread's stored value
@@ -330,7 +326,7 @@ async fn chat_completion(
 
     let crew_row = if let Some(crew_id) = effective_crew_member_id {
         sqlx::query_as::<_, CrewMemberRow>(
-            "SELECT name, role_prompt, personality, ai_provider, ai_model, skills FROM crew_members WHERE id = ?",
+            "SELECT name, role_prompt, personality, ai_provider, ai_model FROM crew_members WHERE id = ?",
         )
         .bind(crew_id)
         .fetch_optional(pool)
@@ -339,65 +335,33 @@ async fn chat_completion(
         None
     };
 
-    // Resolve active skills for this crew member
-    let skills_section = {
-        // Determine which skill names are active
-        let active_skill_names: Vec<String> = if let Some(ref cm) = crew_row {
-            if let Some(ref skills_json) = cm.skills {
-                // Crew member has explicit skill list — parse JSON array
-                serde_json::from_str::<Vec<String>>(skills_json).unwrap_or_default()
-            } else {
-                // Null means use all defaults
-                skill_registry
-                    .disk_skills()
-                    .map(|s| s.name.clone())
-                    .collect()
-            }
-        } else {
-            // No crew member — use all defaults
-            skill_registry
-                .disk_skills()
-                .map(|s| s.name.clone())
-                .collect()
-        };
+    // Resolve active skills for this crew member via the junction table
+    let skills_section = if let Some(crew_id) = effective_crew_member_id {
+        let active_skills = db::models::crew_member_skill::CrewMemberSkill::list_skills_for_crew_member(
+            pool,
+            &crew_id.to_string(),
+        )
+        .await
+        .unwrap_or_default();
 
-        if active_skill_names.is_empty() {
+        if active_skills.is_empty() {
             String::new()
         } else {
-            // Load DB skills (user overrides) — fetch all and index by name
-            let db_skills = db::models::skill::Skill::list(pool)
-                .await
-                .unwrap_or_default();
-            let db_skill_map: std::collections::HashMap<&str, &db::models::skill::Skill> =
-                db_skills.iter().map(|s| (s.name.as_str(), s)).collect();
-
-            let mut parts = Vec::new();
-            for name in &active_skill_names {
-                // DB skills override disk defaults when names collide
-                if let Some(db_skill) = db_skill_map.get(name.as_str()) {
-                    parts.push(db_skill.content.clone());
-                } else if let Some(disk_skill) = skill_registry.get_by_name(name) {
-                    parts.push(disk_skill.content.clone());
+            let mut section = String::from(
+                "\n\n# Active Skills\n\
+                 The following skills are loaded and you MUST follow their instructions:\n\n",
+            );
+            for (i, skill) in active_skills.iter().enumerate() {
+                if i > 0 {
+                    section.push_str("\n---\n\n");
                 }
+                section.push_str(&skill.content);
+                section.push('\n');
             }
-
-            if parts.is_empty() {
-                String::new()
-            } else {
-                let mut section = String::from(
-                    "\n\n# Active Skills\n\
-                     The following skills are loaded and you MUST follow their instructions:\n\n",
-                );
-                for (i, content) in parts.iter().enumerate() {
-                    if i > 0 {
-                        section.push_str("\n---\n\n");
-                    }
-                    section.push_str(content);
-                    section.push('\n');
-                }
-                section
-            }
+            section
         }
+    } else {
+        String::new()
     };
 
     // Only inject persona when the crew member has a non-empty role_prompt.

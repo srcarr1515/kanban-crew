@@ -12,16 +12,25 @@ import {
   FloppyDiskIcon,
   TrashIcon,
   UploadSimpleIcon,
+  DotsSixVerticalIcon,
 } from '@phosphor-icons/react';
 import type { Icon } from '@phosphor-icons/react';
 import { create, useModal } from '@ebay/nice-modal-react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import {
+  DragDropContext,
+  Droppable,
+  Draggable,
+  type DropResult,
+} from '@hello-pangea/dnd';
 import { defineModal } from '@/shared/lib/modals';
 import {
   listCrewMembers,
   createCrewMember,
   updateCrewMember,
   deleteCrewMember,
+  listCrewMemberSkills,
+  replaceCrewMemberSkills,
   type CrewMember,
 } from '@/shared/lib/local/localApi';
 import { cn } from '@/shared/lib/utils';
@@ -62,7 +71,6 @@ type CrewMemberChanges = {
   avatar?: string;
   ai_provider?: string;
   ai_model?: string;
-  skills?: string[] | null;
   can_create_workspace?: boolean;
   can_merge_workspace?: boolean;
   can_propose_tasks?: boolean;
@@ -74,8 +82,6 @@ const selectClasses = cn(
   'bg-primary border border-border text-high',
   'focus:outline-none focus:ring-1 focus:ring-brand'
 );
-
-type SkillMode = 'all' | 'custom' | 'none';
 
 function CrewMemberEditForm({
   member,
@@ -92,6 +98,7 @@ function CrewMemberEditForm({
   aiProviders: AiProviderEntry[];
   availableSkills: SkillEntry[];
 }) {
+  const queryClient = useQueryClient();
   const [name, setName] = useState(member.name);
   const [role, setRole] = useState(member.role);
   const [rolePrompt, setRolePrompt] = useState(member.role_prompt);
@@ -101,28 +108,6 @@ function CrewMemberEditForm({
   const [selectedTools, setSelectedTools] = useState<string[]>(() => {
     try {
       const parsed = JSON.parse(member.tool_access);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
-
-  // Skills state: null = all defaults, string[] = custom selection (empty = none)
-  const [skillMode, setSkillMode] = useState<SkillMode>(() => {
-    if (member.skills === null || member.skills === undefined) return 'all';
-    try {
-      const parsed = JSON.parse(member.skills);
-      if (Array.isArray(parsed) && parsed.length === 0) return 'none';
-      if (Array.isArray(parsed)) return 'custom';
-    } catch {
-      // fall through
-    }
-    return 'all';
-  });
-  const [selectedSkills, setSelectedSkills] = useState<string[]>(() => {
-    if (member.skills === null || member.skills === undefined) return [];
-    try {
-      const parsed = JSON.parse(member.skills);
       return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
@@ -142,6 +127,63 @@ function CrewMemberEditForm({
     member.can_query_database
   );
 
+  // ── Skills via junction table ──────────────────────────────────────────────
+  const crewMemberSkillsKey = ['crew-member-skills', member.id];
+
+  const { data: activeSkills = [] } = useQuery({
+    queryKey: crewMemberSkillsKey,
+    queryFn: () => listCrewMemberSkills(member.id),
+    staleTime: 30_000,
+  });
+
+  const replaceSkillsMutation = useMutation({
+    mutationFn: (skills: { skill_id: string; sort_order?: number }[]) =>
+      replaceCrewMemberSkills(member.id, skills),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: crewMemberSkillsKey });
+    },
+  });
+
+  // Ordered list of active skill IDs (derived from junction table)
+  const activeSkillIds = activeSkills
+    .filter((s): s is SkillEntry & { id: string } => s.id !== null)
+    .map((s) => s.id);
+
+  // Skills that have a valid DB id and can be toggled
+  const toggleableSkills = availableSkills.filter(
+    (s): s is SkillEntry & { id: string } => s.id !== null
+  );
+
+  const handleSkillToggle = (skillId: string) => {
+    const isActive = activeSkillIds.includes(skillId);
+    let next: { skill_id: string; sort_order: number }[];
+    if (isActive) {
+      // Remove and re-index
+      const remaining = activeSkillIds.filter((id) => id !== skillId);
+      next = remaining.map((id, i) => ({ skill_id: id, sort_order: i }));
+    } else {
+      // Append at end
+      next = [
+        ...activeSkillIds.map((id, i) => ({ skill_id: id, sort_order: i })),
+        { skill_id: skillId, sort_order: activeSkillIds.length },
+      ];
+    }
+    replaceSkillsMutation.mutate(next);
+  };
+
+  const handleSkillDragEnd = (result: DropResult) => {
+    if (!result.destination) return;
+    const from = result.source.index;
+    const to = result.destination.index;
+    if (from === to) return;
+    const reordered = [...activeSkillIds];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(to, 0, moved);
+    replaceSkillsMutation.mutate(
+      reordered.map((id, i) => ({ skill_id: id, sort_order: i }))
+    );
+  };
+
   const enabledProviders = aiProviders.filter((p) => p.enabled);
 
   const handleToolToggle = (serverName: string) => {
@@ -152,24 +194,8 @@ function CrewMemberEditForm({
     );
   };
 
-  const handleSkillToggle = (skillName: string) => {
-    setSelectedSkills((prev) =>
-      prev.includes(skillName)
-        ? prev.filter((s) => s !== skillName)
-        : [...prev, skillName]
-    );
-  };
-
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    let skills: string[] | null;
-    if (skillMode === 'all') {
-      skills = null;
-    } else if (skillMode === 'none') {
-      skills = [];
-    } else {
-      skills = selectedSkills;
-    }
     onSave(member.id, {
       name: name.trim() || member.name,
       role: role.trim() || member.role,
@@ -178,7 +204,6 @@ function CrewMemberEditForm({
       personality,
       ai_provider: aiProvider,
       ai_model: aiModel,
-      skills,
       can_create_workspace: canCreateWorkspace,
       can_merge_workspace: canMergeWorkspace,
       can_propose_tasks: canProposeTasks,
@@ -387,68 +412,100 @@ function CrewMemberEditForm({
         <label className="block text-xs font-medium text-low mb-1">
           Skills
         </label>
-        <div className="flex gap-1.5 mb-2">
-          {(['all', 'custom', 'none'] as const).map((mode) => (
-            <button
-              key={mode}
-              type="button"
-              onClick={() => setSkillMode(mode)}
-              className={cn(
-                'px-2 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer',
-                'border',
-                skillMode === mode
-                  ? 'bg-brand/15 text-brand border-brand/30'
-                  : 'bg-primary text-low border-border hover:border-brand/30 hover:text-normal'
-              )}
-            >
-              {mode === 'all'
-                ? 'All (default)'
-                : mode === 'custom'
-                  ? 'Custom'
-                  : 'None'}
-            </button>
-          ))}
-        </div>
-        {skillMode === 'all' && (
-          <p className="text-[11px] text-muted">
-            All available skills will be active for this crew member.
+        {toggleableSkills.length === 0 ? (
+          <p className="text-xs text-muted">
+            No skills available. Create skills in Settings &gt; Skills.
           </p>
-        )}
-        {skillMode === 'none' && (
-          <p className="text-[11px] text-muted">
-            No skills will be active for this crew member.
-          </p>
-        )}
-        {skillMode === 'custom' && (
+        ) : (
           <>
-            {availableSkills.length === 0 ? (
-              <p className="text-xs text-muted">
-                No skills available. Create skills in Settings &gt; Skills.
-              </p>
-            ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {availableSkills.map((skill) => {
-                  const isSelected = selectedSkills.includes(skill.name);
-                  return (
-                    <button
-                      key={skill.name}
-                      type="button"
-                      onClick={() => handleSkillToggle(skill.name)}
-                      className={cn(
-                        'px-2 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer',
-                        'border',
-                        isSelected
-                          ? 'bg-brand/15 text-brand border-brand/30'
-                          : 'bg-primary text-low border-border hover:border-brand/30 hover:text-normal'
-                      )}
-                      title={skill.description}
+            {/* Toggle buttons for all available skills */}
+            <div className="flex flex-wrap gap-1.5 mb-2">
+              {toggleableSkills.map((skill) => {
+                const isActive = activeSkillIds.includes(skill.id);
+                return (
+                  <button
+                    key={skill.id}
+                    type="button"
+                    onClick={() => handleSkillToggle(skill.id)}
+                    className={cn(
+                      'px-2 py-1 rounded-sm text-xs font-medium transition-colors cursor-pointer',
+                      'border',
+                      isActive
+                        ? 'bg-brand/15 text-brand border-brand/30'
+                        : 'bg-primary text-low border-border hover:border-brand/30 hover:text-normal'
+                    )}
+                    title={skill.description}
+                  >
+                    {skill.name}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Drag-to-reorder list for active skills */}
+            {activeSkillIds.length > 0 && (
+              <DragDropContext onDragEnd={handleSkillDragEnd}>
+                <Droppable droppableId={`skills-${member.id}`}>
+                  {(provided) => (
+                    <div
+                      ref={provided.innerRef}
+                      {...provided.droppableProps}
+                      className="space-y-1"
                     >
-                      {skill.name}
-                    </button>
-                  );
-                })}
-              </div>
+                      {activeSkillIds.map((skillId, index) => {
+                        const skill = toggleableSkills.find(
+                          (s) => s.id === skillId
+                        );
+                        if (!skill) return null;
+                        return (
+                          <Draggable
+                            key={skillId}
+                            draggableId={skillId}
+                            index={index}
+                          >
+                            {(dragProvided, snapshot) => (
+                              <div
+                                ref={dragProvided.innerRef}
+                                {...dragProvided.draggableProps}
+                                className={cn(
+                                  'flex items-center gap-2 px-2 py-1.5 rounded-sm text-xs',
+                                  'border border-brand/20 bg-brand/5',
+                                  snapshot.isDragging &&
+                                    'shadow-lg bg-brand/10'
+                                )}
+                              >
+                                <div
+                                  {...dragProvided.dragHandleProps}
+                                  className="cursor-grab shrink-0 text-low"
+                                >
+                                  <DotsSixVerticalIcon
+                                    className="size-3.5"
+                                    weight="bold"
+                                  />
+                                </div>
+                                <span className="text-brand font-medium truncate">
+                                  {skill.name}
+                                </span>
+                                <span className="text-muted truncate flex-1">
+                                  {skill.description}
+                                </span>
+                              </div>
+                            )}
+                          </Draggable>
+                        );
+                      })}
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </DragDropContext>
             )}
+
+            <p className="text-[11px] text-muted mt-1">
+              {activeSkillIds.length === 0
+                ? 'No skills active. Toggle skills above to enable them.'
+                : 'Drag to reorder. Skills are injected into the system prompt in the displayed order.'}
+            </p>
           </>
         )}
       </div>

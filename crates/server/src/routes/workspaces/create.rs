@@ -226,13 +226,33 @@ pub async fn create_and_start_workspace(
                                 cm.personality
                             ));
                         }
-                        persona.push_str(&format!(
+                        persona.push_str(
                             "Stay in character at all times. Bring the expertise of your role \
-                             to every action you take.\n\n\
-                             # Task\n\
-                             {}",
-                            workspace_prompt
-                        ));
+                             to every action you take.\n",
+                        );
+
+                        // Inject active skills from the junction table
+                        let active_skills = db::models::crew_member_skill::CrewMemberSkill::list_skills_for_crew_member(
+                            pool,
+                            &member_id,
+                        )
+                        .await
+                        .unwrap_or_default();
+                        if !active_skills.is_empty() {
+                            persona.push_str(
+                                "\n\n# Active Skills\n\
+                                 The following skills are loaded and you MUST follow their instructions:\n\n",
+                            );
+                            for (i, skill) in active_skills.iter().enumerate() {
+                                if i > 0 {
+                                    persona.push_str("\n---\n\n");
+                                }
+                                persona.push_str(&skill.content);
+                                persona.push('\n');
+                            }
+                        }
+
+                        persona.push_str(&format!("\n# Task\n{}", workspace_prompt));
                         workspace_prompt = persona;
                     }
                 }
