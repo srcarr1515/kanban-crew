@@ -1080,7 +1080,7 @@ export const Actions = {
                     (mergeErr.message.includes('commits ahead') || mergeErr.status === 409)
                   ) {
                     try {
-                      const rebaseResult = await workspacesApi.rebase(workspaceId, { repo_id: repoId });
+                      const rebaseResult = await workspacesApi.rebase(workspaceId, { repo_id: repoId, old_base_branch: null, new_base_branch: null });
                       if (rebaseResult.success) {
                         await workspacesApi.merge(workspaceId, { repo_id: repoId });
                         invalidateWorkspaceQueries(ctx.queryClient, workspaceId);
@@ -1219,6 +1219,8 @@ export const Actions = {
             try {
               const rebaseResult = await workspacesApi.rebase(workspaceId, {
                 repo_id: repoId,
+                old_base_branch: null,
+                new_base_branch: null,
               });
               if (rebaseResult.success) {
                 // Retry merge after successful rebase
@@ -1230,7 +1232,7 @@ export const Actions = {
                 toast.success('Branch rebased and merged successfully');
               } else {
                 // Rebase had conflicts — offer to create a task
-                const rebaseError = rebaseResult.error_data;
+                const rebaseError = rebaseResult.error;
                 if (
                   rebaseError &&
                   typeof rebaseError === 'object' &&
@@ -1274,7 +1276,6 @@ export const Actions = {
                   conflicted_files: string[];
                   target_branch: string;
                 };
-                const workspace = await getWorkspace(ctx.queryClient, workspaceId);
                 const result = await ConfirmDialog.show({
                   title: 'Merge Conflicts After Rebase',
                   message: `Rebased successfully but merge has conflicts in ${conflictData.conflicted_files.length} file(s). Create a task to resolve them?`,

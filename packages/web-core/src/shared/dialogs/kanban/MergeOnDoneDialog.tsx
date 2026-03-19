@@ -8,7 +8,7 @@ import {
 } from '@vibe/ui/components/KeyboardDialog';
 import { Button } from '@vibe/ui/components/Button';
 import { create, useModal } from '@ebay/nice-modal-react';
-import { AlertTriangle, GitMerge, CheckCircle, Info } from 'lucide-react';
+import { AlertTriangle, GitMerge, CheckCircle } from 'lucide-react';
 import { defineModal } from '@/shared/lib/modals';
 import { useState } from 'react';
 

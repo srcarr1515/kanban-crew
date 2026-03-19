@@ -10,7 +10,6 @@ import {
 } from '@phosphor-icons/react';
 import type { AiProviderConfig, AiProviderEntry, VisionModelConfig } from 'shared/types';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
-import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
 import { IconButton } from '@vibe/ui/components/IconButton';
 import {
   DropdownMenu,

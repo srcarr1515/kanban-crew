@@ -583,7 +583,7 @@ function CrewMemberPicker({
   onSelect: (id: string | null) => void;
   showPicker: boolean;
   setShowPicker: (show: boolean) => void;
-  pickerRef: React.RefObject<HTMLDivElement | null>;
+  pickerRef: React.RefObject<HTMLDivElement>;
 }) {
   const selected = crewMembers.find((m) => m.id === selectedCrewId);
 

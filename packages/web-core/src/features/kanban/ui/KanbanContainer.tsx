@@ -1100,7 +1100,7 @@ export function KanbanContainer() {
               } else {
                 allSucceeded = false;
                 // Rebase returned a non-success result — check for conflict details
-                const rebaseError = rebaseResult.error_data;
+                const rebaseError = rebaseResult.error;
                 const hasConflictFiles =
                   rebaseError &&
                   typeof rebaseError === 'object' &&

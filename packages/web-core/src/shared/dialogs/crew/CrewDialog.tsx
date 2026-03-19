@@ -23,7 +23,7 @@ import {
   Draggable,
   type DropResult,
 } from '@hello-pangea/dnd';
-import { defineModal } from '@/shared/lib/modals';
+import { defineModal, type NoProps } from '@/shared/lib/modals';
 import {
   listCrewMembers,
   createCrewMember,
@@ -1150,7 +1150,7 @@ function CrewDialogContent({ onClose }: CrewDialogContentProps) {
   );
 }
 
-const CrewDialogImpl = create(() => {
+const CrewDialogImpl = create<NoProps>(() => {
   const modal = useModal();
   const handleClose = useCallback(() => {
     modal.hide();
