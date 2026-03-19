@@ -65,6 +65,8 @@ pub fn router() -> Router<DeploymentImpl> {
 
 /// List all skills (merged view: disk defaults + DB user-created).
 /// DB skills take precedence over disk skills when names collide.
+/// Disk skills not yet in the DB are auto-seeded so every returned skill has a
+/// valid database ID (required for the crew_member_skills foreign key).
 async fn list_skills(
     State(deployment): State<DeploymentImpl>,
     Extension(registry): Extension<Arc<SkillRegistry>>,
@@ -78,18 +80,36 @@ async fn list_skills(
 
     let mut entries: Vec<SkillEntry> = Vec::new();
 
-    // Add disk skills that aren't overridden by DB
+    // Auto-seed disk skills that aren't yet in the DB, so every returned skill
+    // has a valid database ID. This covers the case where startup seeding failed
+    // or was added after the database was first created.
     for disk in registry.disk_skills() {
         if !db_names.contains(disk.name.as_str()) {
-            entries.push(SkillEntry {
-                id: None,
-                name: disk.name.clone(),
-                description: disk.description.clone(),
-                trigger_description: disk.trigger_description.clone(),
-                content: disk.content.clone(),
-                is_system: true,
-                source: "disk".to_string(),
-            });
+            match Skill::create(
+                pool,
+                &disk.name,
+                &disk.description,
+                &disk.trigger_description,
+                &disk.content,
+                true,
+            )
+            .await
+            {
+                Ok(skill) => {
+                    entries.push(SkillEntry {
+                        id: Some(skill.id),
+                        name: skill.name,
+                        description: skill.description,
+                        trigger_description: skill.trigger_description,
+                        content: skill.content,
+                        is_system: true,
+                        source: "database".to_string(),
+                    });
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to auto-seed skill '{}': {}", disk.name, e);
+                }
+            }
         }
     }
 
