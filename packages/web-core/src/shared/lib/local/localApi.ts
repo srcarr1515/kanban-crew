@@ -278,3 +278,28 @@ export function createTaskComment(
     body: JSON.stringify(data),
   });
 }
+
+// ── Artifacts ────────────────────────────────────────────────────────────────
+
+export interface Artifact {
+  id: string;
+  task_id: string;
+  crew_member_id: string | null;
+  artifact_type: string;
+  title: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export function listTaskArtifacts(taskId: string): Promise<Artifact[]> {
+  return localFetch<Artifact[]>(
+    `/api/local/artifacts?task_id=${encodeURIComponent(taskId)}`
+  );
+}
+
+export function deleteArtifact(id: string): Promise<void> {
+  return localFetch<void>(`/api/local/artifacts/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
+}

@@ -254,6 +254,9 @@ fn generate_types_content() -> String {
         executors::model_selector::ModelSelectorConfig::decl(),
         executors::executor_discovery::ExecutorDiscoveredOptions::decl(),
         serde_json::Value::decl(),
+        db::models::artifact::Artifact::decl(),
+        server::routes::local::artifacts::CreateArtifactRequest::decl(),
+        server::routes::local::artifacts::UpdateArtifactRequest::decl(),
     ];
 
     let body = decls

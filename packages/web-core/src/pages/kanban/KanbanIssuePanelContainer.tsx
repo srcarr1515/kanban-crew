@@ -22,6 +22,7 @@ import { IssueRelationshipsSectionContainer } from './IssueRelationshipsSectionC
 import { IssueWorkspacesSectionContainer } from './IssueWorkspacesSectionContainer';
 import { LocalIssueWorkspacesSectionContainer } from './LocalIssueWorkspacesSectionContainer';
 import { LocalIssueCommentsSectionContainer } from './LocalIssueCommentsSectionContainer';
+import { LocalArtifactsSectionContainer } from './LocalArtifactsSectionContainer';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import {
   KanbanIssuePanel,
@@ -959,6 +960,11 @@ export function KanbanIssuePanelContainer({
         ) : (
           <IssueCommentsSectionContainer issueId={issueId} />
         )
+      }
+      renderArtifactsSection={
+        IS_LOCAL_MODE
+          ? (issueId) => <LocalArtifactsSectionContainer issueId={issueId} />
+          : undefined
       }
     />
   );

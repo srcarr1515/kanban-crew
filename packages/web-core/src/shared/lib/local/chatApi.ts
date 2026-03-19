@@ -69,6 +69,12 @@ export interface DeleteProposal {
   deletions: DeleteProposalItem[];
 }
 
+export interface ArtifactBlock {
+  artifact_type: string;
+  title: string;
+  content: string;
+}
+
 export interface QueryBlock {
   sql: string;
 }
@@ -284,6 +290,41 @@ export function executeQuery(sql: string, crewMemberId?: string): Promise<QueryR
     method: 'POST',
     body: JSON.stringify({ sql, crew_member_id: crewMemberId ?? null }),
   });
+}
+
+const ARTIFACT_BLOCK_REGEX = /```artifact\n([\s\S]*?)\n```/g;
+
+const VALID_ARTIFACT_TYPES = ['spec', 'test_plan', 'bug_report', 'design_notes', 'review', 'other'];
+
+/** Normalize a raw parsed object into an ArtifactBlock, returning null if invalid. */
+function normalizeArtifact(raw: unknown): ArtifactBlock | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const a = raw as Record<string, unknown>;
+  if (typeof a.title !== 'string' || !a.title.trim()) return null;
+  if (typeof a.artifact_type !== 'string' || !VALID_ARTIFACT_TYPES.includes(a.artifact_type)) return null;
+  return {
+    artifact_type: a.artifact_type,
+    title: a.title.trim(),
+    content: typeof a.content === 'string' ? a.content : '',
+  };
+}
+
+/** Extract artifact blocks from an assistant message. */
+export function extractArtifacts(content: string): ArtifactBlock[] {
+  const artifacts: ArtifactBlock[] = [];
+  let match;
+  while ((match = ARTIFACT_BLOCK_REGEX.exec(content)) !== null) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      const normalized = normalizeArtifact(parsed);
+      if (normalized) {
+        artifacts.push(normalized);
+      }
+    } catch {
+      // malformed JSON, skip
+    }
+  }
+  return artifacts;
 }
 
 const DELETE_PROPOSAL_REGEX = /```delete_proposal\n([\s\S]*?)\n```/g;

@@ -1,3 +1,4 @@
+pub mod artifact;
 pub mod coding_agent_turn;
 pub mod crew_member;
 pub mod crew_member_skill;

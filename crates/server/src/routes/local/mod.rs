@@ -46,6 +46,7 @@ where
     T::deserialize(deserializer).map(Some)
 }
 
+pub mod artifacts;
 pub mod chat;
 pub mod crew_member_skills;
 pub mod crew_members;
@@ -158,6 +159,7 @@ pub fn router() -> Router<DeploymentImpl> {
             "/local/tasks/{task_id}/workspaces/{workspace_id}/link",
             post(link_workspace_to_task).delete(unlink_workspace_from_task),
         )
+        .merge(artifacts::router())
         .merge(chat::router())
         .merge(crew_members::router())
         .merge(crew_member_skills::router())

@@ -81,8 +81,7 @@ async fn list_crew_member_skills(
     Path(crew_member_id): Path<String>,
 ) -> Result<ResponseJson<ApiResponse<Vec<Skill>>>, ApiError> {
     let pool = &deployment.db().pool;
-    let skills =
-        CrewMemberSkill::list_skills_for_crew_member(pool, &crew_member_id).await?;
+    let skills = CrewMemberSkill::list_skills_for_crew_member(pool, &crew_member_id).await?;
     Ok(ResponseJson(ApiResponse::success(skills)))
 }
 
@@ -95,8 +94,7 @@ async fn add_crew_member_skill(
     let pool = &deployment.db().pool;
     let sort_order = request.sort_order.unwrap_or(0);
     let entry =
-        CrewMemberSkill::create(pool, &crew_member_id, &request.skill_id, sort_order)
-            .await?;
+        CrewMemberSkill::create(pool, &crew_member_id, &request.skill_id, sort_order).await?;
     Ok(ResponseJson(ApiResponse::success(entry)))
 }
 
@@ -124,13 +122,9 @@ async fn update_crew_member_skill(
     Json(request): Json<UpdateSortOrderRequest>,
 ) -> Result<ResponseJson<ApiResponse<CrewMemberSkill>>, ApiError> {
     let pool = &deployment.db().pool;
-    let entry = CrewMemberSkill::update_sort_order(
-        pool,
-        &crew_member_id,
-        &skill_id,
-        request.sort_order,
-    )
-    .await?;
+    let entry =
+        CrewMemberSkill::update_sort_order(pool, &crew_member_id, &skill_id, request.sort_order)
+            .await?;
     Ok(ResponseJson(ApiResponse::success(entry)))
 }
 

@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { RobotIcon, UserIcon } from '@phosphor-icons/react';
 import type { ChatMessage as ChatMessageType } from '@/shared/lib/local/chatApi';
-import { extractProposals, extractModifyProposals, extractDeleteProposals, extractQueryBlocks } from '@/shared/lib/local/chatApi';
+import { extractProposals, extractModifyProposals, extractDeleteProposals, extractQueryBlocks, extractArtifacts } from '@/shared/lib/local/chatApi';
 import type { CrewMember } from '@/shared/lib/local/localApi';
 import { ProposalCard } from './ProposalCard';
 import { ModifyProposalCard } from './ModifyProposalCard';
 import { DeleteProposalCard } from './DeleteProposalCard';
 import { QueryCard } from './QueryCard';
+import { ArtifactCard } from './ArtifactCard';
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -82,16 +83,20 @@ export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
     () => (isAssistant ? extractQueryBlocks(message.content) : []),
     [isAssistant, message.content]
   );
+  const artifactBlocks = useMemo(
+    () => (isAssistant ? extractArtifacts(message.content) : []),
+    [isAssistant, message.content]
+  );
 
-  const hasProposals = proposals.length > 0 || modifyProposals.length > 0 || deleteProposals.length > 0 || queryBlocks.length > 0;
+  const hasSpecialBlocks = proposals.length > 0 || modifyProposals.length > 0 || deleteProposals.length > 0 || queryBlocks.length > 0 || artifactBlocks.length > 0;
 
-  // Strip all proposal/query blocks from display text
+  // Strip all proposal/query/artifact blocks from display text
   const displayContent = useMemo(() => {
-    if (!hasProposals) return message.content;
+    if (!hasSpecialBlocks) return message.content;
     return message.content
-      .replace(/```(?:proposal|modify_proposal|delete_proposal|query)\n[\s\S]*?\n```/g, '')
+      .replace(/```(?:proposal|modify_proposal|delete_proposal|query|artifact)\n[\s\S]*?\n```/g, '')
       .trim();
-  }, [message.content, hasProposals]);
+  }, [message.content, hasSpecialBlocks]);
 
   return (
     <div className={`flex gap-2.5 ${isUser ? 'flex-row-reverse' : ''}`}>
@@ -152,6 +157,9 @@ export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
         {queryBlocks.map((query, i) => (
           <QueryCard key={`query-${i}`} query={query} crewMemberId={crewMember?.id} />
         ))}
+        {artifactBlocks.map((artifact, i) => (
+          <ArtifactCard key={`artifact-${i}`} artifact={artifact} crewMemberId={crewMember?.id} />
+        ))}
       </div>
     </div>
   );
@@ -204,11 +212,12 @@ export function StreamingMessage({ content, crewMember }: StreamingMessageProps)
   const modifyProposals = useMemo(() => extractModifyProposals(content), [content]);
   const deleteProposals = useMemo(() => extractDeleteProposals(content), [content]);
   const queryBlocks = useMemo(() => extractQueryBlocks(content), [content]);
-  const hasProposals = proposals.length > 0 || modifyProposals.length > 0 || deleteProposals.length > 0 || queryBlocks.length > 0;
+  const artifactBlocks = useMemo(() => extractArtifacts(content), [content]);
+  const hasSpecialBlocks = proposals.length > 0 || modifyProposals.length > 0 || deleteProposals.length > 0 || queryBlocks.length > 0 || artifactBlocks.length > 0;
   const displayContent = useMemo(() => {
-    if (!hasProposals) return content;
-    return content.replace(/```(?:proposal|modify_proposal|delete_proposal|query)\n[\s\S]*?\n```/g, '').trim();
-  }, [content, hasProposals]);
+    if (!hasSpecialBlocks) return content;
+    return content.replace(/```(?:proposal|modify_proposal|delete_proposal|query|artifact)\n[\s\S]*?\n```/g, '').trim();
+  }, [content, hasSpecialBlocks]);
 
   return (
     <div className="flex gap-2.5">
@@ -234,6 +243,9 @@ export function StreamingMessage({ content, crewMember }: StreamingMessageProps)
         ))}
         {queryBlocks.map((query, i) => (
           <QueryCard key={`query-${i}`} query={query} crewMemberId={crewMember?.id} />
+        ))}
+        {artifactBlocks.map((artifact, i) => (
+          <ArtifactCard key={`artifact-${i}`} artifact={artifact} crewMemberId={crewMember?.id} />
         ))}
       </div>
     </div>

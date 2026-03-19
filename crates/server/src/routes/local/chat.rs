@@ -337,12 +337,13 @@ async fn chat_completion(
 
     // Resolve active skills for this crew member via the junction table
     let skills_section = if let Some(crew_id) = effective_crew_member_id {
-        let active_skills = db::models::crew_member_skill::CrewMemberSkill::list_skills_for_crew_member(
-            pool,
-            &crew_id.to_string(),
-        )
-        .await
-        .unwrap_or_default();
+        let active_skills =
+            db::models::crew_member_skill::CrewMemberSkill::list_skills_for_crew_member(
+                pool,
+                &crew_id.to_string(),
+            )
+            .await
+            .unwrap_or_default();
 
         if active_skills.is_empty() {
             String::new()
