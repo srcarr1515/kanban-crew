@@ -14,7 +14,6 @@ import {
   useUiPreferencesStore,
   resolveKanbanProjectState,
   KANBAN_ASSIGNEE_FILTER_VALUES,
-  KANBAN_PROJECT_VIEW_IDS,
   type KanbanFilterState,
   type KanbanSortField,
 } from '@/shared/stores/useUiPreferencesStore';
@@ -235,9 +234,6 @@ export function KanbanContainer() {
   const projectViewPreferencesById = useUiPreferencesStore(
     (s) => s.kanbanProjectViewPreferences[projectId]
   );
-  const setKanbanProjectView = useUiPreferencesStore(
-    (s) => s.setKanbanProjectView
-  );
   const setKanbanProjectViewFilters = useUiPreferencesStore(
     (s) => s.setKanbanProjectViewFilters
   );
@@ -361,12 +357,6 @@ export function KanbanContainer() {
     clearKanbanProjectViewPreferences(projectId, activeViewId);
   }, [activeViewId, clearKanbanProjectViewPreferences, projectId]);
 
-  const handleKanbanProjectViewChange = useCallback(
-    (viewId: string) => {
-      setKanbanProjectView(projectId, viewId);
-    },
-    [projectId, setKanbanProjectView]
-  );
   const kanbanViewMode = useUiPreferencesStore((s) => s.kanbanViewMode);
   const listViewStatusFilter = useUiPreferencesStore(
     (s) => s.listViewStatusFilter
@@ -1651,9 +1641,6 @@ export function KanbanContainer() {
             onFiltersDialogOpenChange={setIsFiltersDialogOpen}
             tags={tags}
             users={membersWithProfiles}
-            activeViewId={activeViewId}
-            onViewChange={handleKanbanProjectViewChange}
-            viewIds={KANBAN_PROJECT_VIEW_IDS}
             projectId={projectId}
             currentUserId={userId}
             filters={kanbanFilters}
