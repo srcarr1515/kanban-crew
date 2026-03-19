@@ -4,12 +4,15 @@ import path from 'path';
 import crypto from 'crypto';
 import os from 'os';
 
+const GITHUB_REPO = 'srcarr1515/kanban-crew';
+const GITHUB_RELEASES_BASE = `https://github.com/${GITHUB_REPO}/releases/download`;
+const GITHUB_API_BASE = `https://api.github.com/repos/${GITHUB_REPO}`;
+
 // Replaced during npm pack by workflow
-export const R2_BASE_URL = '__R2_PUBLIC_URL__';
-export const BINARY_TAG = '__BINARY_TAG__'; // e.g., v0.0.135-20251215122030
+export const BINARY_TAG = '__BINARY_TAG__'; // e.g., v0.1.30-20260319120000
 export const CACHE_DIR = path.join(os.homedir(), '.kanban-crew', 'bin');
 
-// Local development mode: use binaries from npx-cli/dist/ instead of R2
+// Local development mode: use binaries from npx-cli/dist/ instead of GitHub Releases
 // Only activate if dist/ exists (i.e., running from source after local-build.sh)
 export const LOCAL_DIST_DIR = path.join(__dirname, '..', 'dist');
 export const LOCAL_DEV_MODE =
@@ -22,7 +25,7 @@ export interface BinaryInfo {
 }
 
 export interface BinaryManifest {
-  latest?: string;
+  version?: string;
   platforms: Record<string, Record<string, BinaryInfo>>;
 }
 
@@ -45,9 +48,13 @@ export interface DesktopBundleInfo {
 type ProgressCallback = (downloaded: number, total: number) => void;
 
 function fetchJson<T>(url: string): Promise<T> {
+  const isApiCall = url.startsWith('https://api.github.com');
   return new Promise((resolve, reject) => {
+    const options = isApiCall
+      ? { headers: { 'User-Agent': 'kanban-crew-cli' } }
+      : {};
     https
-      .get(url, (res) => {
+      .get(url, options, (res) => {
         if (res.statusCode === 301 || res.statusCode === 302) {
           return fetchJson<T>(res.headers.location!)
             .then(resolve)
@@ -180,19 +187,19 @@ export async function ensureBinary(
 
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  const manifest = await fetchJson<BinaryManifest>(
-    `${R2_BASE_URL}/binaries/${BINARY_TAG}/manifest.json`
-  );
-  const binaryInfo = manifest.platforms?.[platform]?.[binaryName];
-
-  if (!binaryInfo) {
-    throw new Error(
-      `Binary ${binaryName} not available for ${platform}`
-    );
+  // Fetch manifest for checksum verification (best-effort — don't fail if unavailable)
+  let expectedSha256: string | undefined;
+  try {
+    const manifestUrl = `${GITHUB_RELEASES_BASE}/${BINARY_TAG}/manifest.json`;
+    const manifest = await fetchJson<BinaryManifest>(manifestUrl);
+    expectedSha256 = manifest.platforms?.[platform]?.[binaryName]?.sha256;
+  } catch {
+    // Manifest unavailable — proceed without checksum verification
   }
 
-  const url = `${R2_BASE_URL}/binaries/${BINARY_TAG}/${platform}/${binaryName}.zip`;
-  await downloadFile(url, zipPath, binaryInfo.sha256, onProgress);
+  // Binaries are uploaded as {binaryName}-{platform}.zip on GitHub Releases
+  const url = `${GITHUB_RELEASES_BASE}/${BINARY_TAG}/${binaryName}-${platform}.zip`;
+  await downloadFile(url, zipPath, expectedSha256, onProgress);
 
   return zipPath;
 }
@@ -241,10 +248,9 @@ export async function ensureDesktopBundle(
 
   fs.mkdirSync(cacheDir, { recursive: true });
 
-  // Fetch the desktop manifest
-  const manifest = await fetchJson<DesktopManifest>(
-    `${R2_BASE_URL}/binaries/${BINARY_TAG}/tauri/desktop-manifest.json`
-  );
+  // Fetch the desktop manifest from GitHub Releases
+  const manifestUrl = `${GITHUB_RELEASES_BASE}/${BINARY_TAG}/desktop-manifest.json`;
+  const manifest = await fetchJson<DesktopManifest>(manifestUrl);
   const platformInfo = manifest.platforms?.[tauriPlatform];
   if (!platformInfo) {
     throw new Error(
@@ -256,7 +262,8 @@ export async function ensureDesktopBundle(
 
   // Skip download if file already exists (e.g. previous failed install)
   if (!fs.existsSync(destPath)) {
-    const url = `${R2_BASE_URL}/binaries/${BINARY_TAG}/tauri/${tauriPlatform}/${platformInfo.file}`;
+    // Tauri installers are uploaded flat to the release (no platform subdir)
+    const url = `${GITHUB_RELEASES_BASE}/${BINARY_TAG}/${platformInfo.file}`;
     await downloadFile(url, destPath, platformInfo.sha256, onProgress);
   }
 
@@ -268,8 +275,13 @@ export async function ensureDesktopBundle(
 }
 
 export async function getLatestVersion(): Promise<string | undefined> {
-  const manifest = await fetchJson<BinaryManifest>(
-    `${R2_BASE_URL}/binaries/manifest.json`
-  );
-  return manifest.latest;
+  try {
+    const release = await fetchJson<{ tag_name: string }>(
+      `${GITHUB_API_BASE}/releases/latest`
+    );
+    // Tags look like v0.1.30-20260319120000 — extract just the semver part
+    return release.tag_name?.replace(/^v/, '').split('-')[0];
+  } catch {
+    return undefined;
+  }
 }

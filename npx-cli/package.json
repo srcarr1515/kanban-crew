@@ -19,7 +19,7 @@
   "engines": {
     "node": ">=20.19.0"
   },
-  "license": "",
+  "license": "Apache-2.0",
   "description": "NPX wrapper around kanban-crew and kanban-crew-mcp",
   "devDependencies": {
     "esbuild": "^0.27.2"
