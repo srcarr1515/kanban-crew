@@ -43,8 +43,8 @@ echo "🔍 Detected platform: $PLATFORM"
 echo "🔧 Using target directory: $CARGO_TARGET_DIR"
 
 # Set API base URL for remote features
-export VK_SHARED_API_BASE="https://api.vibekanban.com"
-export VITE_VK_SHARED_API_BASE="https://api.vibekanban.com"
+export VK_SHARED_API_BASE="https://api.kanbancrew.com"
+export VITE_VK_SHARED_API_BASE="https://api.kanbancrew.com"
 
 echo "🧹 Cleaning previous builds..."
 rm -rf npx-cli/dist
@@ -55,33 +55,33 @@ echo "🔨 Building web app..."
 
 echo "🔨 Building Rust binaries..."
 cargo build --release --manifest-path Cargo.toml
-cargo build --release --bin vibe-kanban-mcp --manifest-path Cargo.toml
+cargo build --release --bin kanban-crew-mcp --manifest-path Cargo.toml
 
 echo "📦 Creating distribution package..."
 
 # Copy the main binary
-cp ${CARGO_TARGET_DIR}/release/server vibe-kanban
-zip -q vibe-kanban.zip vibe-kanban
-rm -f vibe-kanban 
-mv vibe-kanban.zip npx-cli/dist/$PLATFORM/vibe-kanban.zip
+cp ${CARGO_TARGET_DIR}/release/server kanban-crew
+zip -q kanban-crew.zip kanban-crew
+rm -f kanban-crew 
+mv kanban-crew.zip npx-cli/dist/$PLATFORM/kanban-crew.zip
 
 # Copy the MCP binary
-cp ${CARGO_TARGET_DIR}/release/vibe-kanban-mcp vibe-kanban-mcp
-zip -q vibe-kanban-mcp.zip vibe-kanban-mcp
-rm -f vibe-kanban-mcp
-mv vibe-kanban-mcp.zip npx-cli/dist/$PLATFORM/vibe-kanban-mcp.zip
+cp ${CARGO_TARGET_DIR}/release/kanban-crew-mcp kanban-crew-mcp
+zip -q kanban-crew-mcp.zip kanban-crew-mcp
+rm -f kanban-crew-mcp
+mv kanban-crew-mcp.zip npx-cli/dist/$PLATFORM/kanban-crew-mcp.zip
 
 # Copy the Review CLI binary
-cp ${CARGO_TARGET_DIR}/release/review vibe-kanban-review
-zip -q vibe-kanban-review.zip vibe-kanban-review
-rm -f vibe-kanban-review
-mv vibe-kanban-review.zip npx-cli/dist/$PLATFORM/vibe-kanban-review.zip
+cp ${CARGO_TARGET_DIR}/release/review kanban-crew-review
+zip -q kanban-crew-review.zip kanban-crew-review
+rm -f kanban-crew-review
+mv kanban-crew-review.zip npx-cli/dist/$PLATFORM/kanban-crew-review.zip
 
 echo "✅ CLI build complete!"
 echo "📁 Files created:"
-echo "   - npx-cli/dist/$PLATFORM/vibe-kanban.zip"
-echo "   - npx-cli/dist/$PLATFORM/vibe-kanban-mcp.zip"
-echo "   - npx-cli/dist/$PLATFORM/vibe-kanban-review.zip"
+echo "   - npx-cli/dist/$PLATFORM/kanban-crew.zip"
+echo "   - npx-cli/dist/$PLATFORM/kanban-crew-mcp.zip"
+echo "   - npx-cli/dist/$PLATFORM/kanban-crew-review.zip"
 
 # Optionally build the Tauri desktop app
 if [[ "$1" == "--desktop" || "$1" == "--all" ]]; then

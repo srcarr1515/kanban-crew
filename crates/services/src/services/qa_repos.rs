@@ -13,13 +13,13 @@ use super::filesystem::{DirectoryEntry, FilesystemError};
 
 /// QA repository URLs and names
 const QA_REPOS: &[(&str, &str)] = &[
-    ("internal-qa-1", "https://github.com/BloopAI/internal-qa-1"),
-    ("internal-qa-2", "https://github.com/BloopAI/internal-qa-2"),
+    ("qa-1", "https://github.com/srcarr1515/qa-1"),
+    ("qa-2", "https://github.com/srcarr1515/qa-2"),
 ];
 
 /// Persistent directory for QA repos - survives server restarts
 static QA_REPOS_DIR: Lazy<PathBuf> = Lazy::new(|| {
-    let dir = utils::path::get_vibe_kanban_temp_dir().join("qa-repos");
+    let dir = utils::path::get_kanban_crew_temp_dir().join("qa-repos");
     if let Err(e) = std::fs::create_dir_all(&dir) {
         warn!("Failed to create QA repos directory: {}", e);
     }

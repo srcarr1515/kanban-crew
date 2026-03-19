@@ -29,7 +29,7 @@ runs:
       uses: ./.github/actions/setup-node
 
     - name: Setup sccache
-      uses: BloopAI/sccache-action@main
+      uses: mozilla-actions/sccache-action@main
 
     - name: Install Rust toolchain
       if: ${{ inputs.components == '' }}

@@ -162,7 +162,7 @@ export default function UpgradePage() {
               Choose Your Plan
             </h1>
             <p className="text-sm text-low">
-              Pick the plan that fits your team and continue to checkout.
+              Pick the plan that fits your workflow.
             </p>
           </header>
 
@@ -180,50 +180,32 @@ export default function UpgradePage() {
           )}
 
           {step === "plan-selection" && (
-            <div className="grid gap-base md:grid-cols-3">
+            <div className="grid gap-base md:grid-cols-2">
               <PlanCard
-                name="Basic"
+                name="Local"
                 price="Free"
-                description="For individual users"
+                description="Run locally on your machine"
                 features={[
-                  "1 user included",
-                  "Core features",
-                  "Community support",
+                  "Full kanban board",
+                  "AI crew members",
+                  "Local SQLite database",
+                  "MCP server support",
                 ]}
               />
               <PlanCard
-                name="Pro"
-                price="$30"
-                priceUnit="/user/month"
-                description="For teams of 2-49"
+                name="Cloud Sync"
+                price="Coming soon"
+                description="Remote access & PWA"
                 features={[
-                  "2-49 users",
-                  "All Basic features",
-                  "99.5% SLA",
-                  "Discord support",
+                  "Everything in Local",
+                  "PWA remote control",
+                  "Cloud sync",
+                  "Access from any device",
                 ]}
                 popular
                 cta="Subscribe"
                 onCta={() => {
                   void handleSubscribe();
-                }}
-              />
-              <PlanCard
-                name="Enterprise"
-                price="Custom"
-                description="For large organizations"
-                features={[
-                  "50+ users",
-                  "All Pro features",
-                  "SSO / SAML",
-                  "99.9% SLA",
-                  "Dedicated Slack channel",
-                ]}
-                cta="Contact Sales"
-                onCta={() => {
-                  window.location.assign(
-                    "mailto:louis@bloop.ai?subject=Enterprise%20Plan%20Inquiry",
-                  );
                 }}
               />
             </div>

@@ -1,6 +1,6 @@
 # Remote service
 
-The `remote` crate contains the implementation of the Vibe Kanban hosted API.
+The `remote` crate contains the implementation of the Kanban Crew hosted API.
 
 ## Prerequisites
 
@@ -8,7 +8,7 @@ Create a `.env.remote` file in `crates/remote/` (this matches `pnpm run remote:d
 
 ```env
 # Required — generate with: openssl rand -base64 48
-VIBEKANBAN_REMOTE_JWT_SECRET=your_base64_encoded_secret
+KANBANCREW_REMOTE_JWT_SECRET=your_base64_encoded_secret
 
 # Required — password for the electric_sync database role used by ElectricSQL
 ELECTRIC_ROLE_PASSWORD=your_secure_password
@@ -30,7 +30,7 @@ VITE_PUBLIC_REACT_VIRTUOSO_LICENSE_KEY=
 LOOPS_EMAIL_API_KEY=
 ```
 
-Generate `VIBEKANBAN_REMOTE_JWT_SECRET` once using `openssl rand -base64 48` and copy the value into `.env.remote`.
+Generate `KANBANCREW_REMOTE_JWT_SECRET` once using `openssl rand -base64 48` and copy the value into `.env.remote`.
 
 ## Run the stack locally
 
@@ -53,7 +53,7 @@ This starts PostgreSQL, ElectricSQL, the Remote Server, and the Relay Server.
 - Relay API: `http://localhost:8082`
 - Postgres: `postgres://remote:remote@localhost:5433/remote`
 
-## Run Vibe Kanban
+## Run Kanban Crew
 
 To connect the desktop client to your local remote server (without relay/tunnel):
 

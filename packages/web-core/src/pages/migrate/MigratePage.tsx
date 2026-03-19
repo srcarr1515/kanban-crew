@@ -46,8 +46,8 @@ export function MigratePage() {
 
   const logoSrc =
     resolveTheme(theme) === 'dark'
-      ? '/vibe-kanban-logo-dark.svg'
-      : '/vibe-kanban-logo.svg';
+      ? '/kanban-crew-logo-dark.svg'
+      : '/kanban-crew-logo.svg';
 
   return (
     <div className="h-full overflow-auto bg-primary">
@@ -57,7 +57,7 @@ export function MigratePage() {
             <div className="flex justify-center">
               <img
                 src={logoSrc}
-                alt="Vibe Kanban"
+                alt="Kanban Crew"
                 className="h-8 w-auto logo"
               />
             </div>

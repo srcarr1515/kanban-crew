@@ -23,7 +23,7 @@ const features = [
       <>
         Access your projects from anywhere.{' '}
         <a
-          href="https://www.vibekanban.com/docs/self-hosting/local-development"
+          href="https://www.kanbancrew.com/docs/self-hosting/local-development"
           target="_blank"
           rel="noopener noreferrer"
           className="text-brand hover:underline"

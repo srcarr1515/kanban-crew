@@ -1,9 +1,9 @@
 ---
 title: "Deploy with Docker Compose"
-description: "Deploy Vibe Kanban Cloud on any server using Docker Compose"
+description: "Deploy Kanban Crew Cloud on any server using Docker Compose"
 ---
 
-This guide covers deploying Vibe Kanban Cloud on any Linux server using Docker Compose. This approach works with any cloud provider (AWS, DigitalOcean, Hetzner, etc.) or on-premises server.
+This guide covers deploying Kanban Crew Cloud on any Linux server using Docker Compose. This approach works with any cloud provider (AWS, DigitalOcean, Hetzner, etc.) or on-premises server.
 
 ## Prerequisites
 
@@ -27,11 +27,11 @@ sudo usermod -aG docker $USER
 # Log out and back in for group changes to take effect
 ```
 
-Clone the Vibe Kanban repository:
+Clone the Kanban Crew repository:
 
 ```bash
-git clone https://github.com/BloopAI/vibe-kanban.git
-cd vibe-kanban
+git clone https://github.com/srcarr1515/kanban-crew.git
+cd kanban-crew
 ```
 
 ## Step 2: Configure OAuth
@@ -60,7 +60,7 @@ Create `.env.remote` in the repository root:
 
 ```env .env.remote
 # Required secrets
-VIBEKANBAN_REMOTE_JWT_SECRET=<your_generated_jwt_secret>
+KANBANCREW_REMOTE_JWT_SECRET=<your_generated_jwt_secret>
 ELECTRIC_ROLE_PASSWORD=<secure_password_for_electric>
 DB_PASSWORD=<secure_database_password>
 
@@ -159,7 +159,7 @@ services:
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
-      VIBEKANBAN_REMOTE_JWT_SECRET: ${VIBEKANBAN_REMOTE_JWT_SECRET}
+      KANBANCREW_REMOTE_JWT_SECRET: ${KANBANCREW_REMOTE_JWT_SECRET}
       ELECTRIC_ROLE_PASSWORD: ${ELECTRIC_ROLE_PASSWORD}
       LOOPS_EMAIL_API_KEY: ${LOOPS_EMAIL_API_KEY:-}
     healthcheck:
@@ -209,7 +209,7 @@ The first build takes 10-15 minutes. Subsequent deployments are faster as Docker
 ## Step 7: Verify Deployment
 
 1. Open `https://your-domain.com` in your browser
-2. You should see the Vibe Kanban Cloud login page
+2. You should see the Kanban Crew Cloud login page
 3. Sign in with your OAuth provider
 4. Create your first organisation and project
 
@@ -237,7 +237,7 @@ Relay/tunnel support requires:
       RUST_LOG: info
       SERVER_DATABASE_URL: postgres://remote:${DB_PASSWORD:-remote}@remote-db:5432/remote
       RELAY_LISTEN_ADDR: 0.0.0.0:8082
-      VIBEKANBAN_REMOTE_JWT_SECRET: ${VIBEKANBAN_REMOTE_JWT_SECRET}
+      KANBANCREW_REMOTE_JWT_SECRET: ${KANBANCREW_REMOTE_JWT_SECRET}
 ```
 
 ### Add relay proxy routes
@@ -256,7 +256,7 @@ Standard ACME HTTP challenge does not issue wildcard certificates. For wildcard 
 To update to a new version:
 
 ```bash
-cd vibe-kanban
+cd kanban-crew
 git pull origin main
 
 cd crates/remote

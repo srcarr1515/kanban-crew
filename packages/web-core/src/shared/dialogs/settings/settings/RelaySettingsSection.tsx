@@ -41,7 +41,7 @@ interface PairedHostRow {
 
 const RELAY_PAIRED_CLIENTS_QUERY_KEY = ['relay', 'paired-clients'] as const;
 const RELAY_REMOTE_CONTROL_DOCS_URL =
-  'https://www.vibekanban.com/docs/remote-control';
+  'https://www.kanbancrew.com/docs/remote-control';
 
 interface RelaySettingsSectionInitialState {
   hostId?: string;

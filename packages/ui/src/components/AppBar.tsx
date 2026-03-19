@@ -392,7 +392,7 @@ export function AppBar({
         {userPopover}
         {crewButton}
         <AppBarSocialLink
-          href="https://github.com/BloopAI/vibe-kanban"
+          href="https://github.com/srcarr1515/kanban-crew"
           label="Star on GitHub"
           iconPath={githubIconPath}
           badge={

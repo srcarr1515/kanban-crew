@@ -97,7 +97,7 @@ services:
       GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
       GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
       GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
-      VIBEKANBAN_REMOTE_JWT_SECRET: ${VIBEKANBAN_REMOTE_JWT_SECRET:?set in .env.remote}
+      KANBANCREW_REMOTE_JWT_SECRET: ${KANBANCREW_REMOTE_JWT_SECRET:?set in .env.remote}
       # Optional — leave empty to disable invitation emails
       LOOPS_EMAIL_API_KEY: ${LOOPS_EMAIL_API_KEY:-}
       SERVER_PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:3000}
@@ -144,7 +144,7 @@ services:
       RUST_LOG: info
       SERVER_DATABASE_URL: postgres://remote:remote@remote-db:5432/remote
       RELAY_LISTEN_ADDR: 0.0.0.0:8082
-      VIBEKANBAN_REMOTE_JWT_SECRET: ${VIBEKANBAN_REMOTE_JWT_SECRET:?set in .env.remote}
+      KANBANCREW_REMOTE_JWT_SECRET: ${KANBANCREW_REMOTE_JWT_SECRET:?set in .env.remote}
     ports:
       - "127.0.0.1:8082:8082"
     restart: unless-stopped

@@ -1,26 +1,26 @@
 {
-  "name": "vibe-kanban",
+  "name": "kanban-crew",
   "private": false,
   "version": "0.1.30",
   "main": "index.js",
   "bin": {
-    "vibe-kanban": "bin/cli.js"
+    "kanban-crew": "bin/cli.js"
   },
   "scripts": {
     "build": "esbuild src/cli.ts --bundle --platform=node --target=node20 --format=cjs --outfile=bin/cli.js --external:adm-zip --banner:js=\"#!/usr/bin/env node\"",
     "check": "tsc --noEmit -p tsconfig.json"
   },
   "keywords": [],
-  "author": "bloop",
+  "author": "srcarr1515",
   "repository": {
     "type": "git",
-    "url": "https://github.com/BloopAI/vibe-kanban"
+    "url": "https://github.com/srcarr1515/kanban-crew"
   },
   "engines": {
     "node": ">=20.19.0"
   },
   "license": "",
-  "description": "NPX wrapper around vibe-kanban and vibe-kanban-mcp",
+  "description": "NPX wrapper around kanban-crew and kanban-crew-mcp",
   "devDependencies": {
     "esbuild": "^0.27.2"
   },

@@ -115,12 +115,12 @@ const SOCIAL_LINKS = [
   },
   {
     label: 'GitHub',
-    href: 'https://github.com/BloopAI/vibe-kanban',
+    href: 'https://github.com/srcarr1515/kanban-crew',
     icon: GithubLogoIcon,
   },
   {
     label: 'Docs',
-    href: 'https://www.vibekanban.com/docs',
+    href: 'https://www.kanbancrew.com/docs',
     icon: BookOpenIcon,
   },
 ];
@@ -177,8 +177,8 @@ export function LandingPage() {
 
   const logoSrc =
     resolveTheme(theme) === 'dark'
-      ? '/vibe-kanban-logo-dark.svg'
-      : '/vibe-kanban-logo.svg';
+      ? '/kanban-crew-logo-dark.svg'
+      : '/kanban-crew-logo.svg';
 
   useEffect(() => {
     if (!config || initialized) return;
@@ -337,7 +337,7 @@ export function LandingPage() {
         {/* Header */}
         <header className="shrink-0 space-y-base p-double pb-base">
           <div className="flex items-center justify-between">
-            <img src={logoSrc} alt="Vibe Kanban" className="h-8 w-auto logo" />
+            <img src={logoSrc} alt="Kanban Crew" className="h-8 w-auto logo" />
             <div className="flex flex-wrap items-center gap-2">
               {SOCIAL_LINKS.map((link) => (
                 <PrimaryButton
@@ -357,12 +357,12 @@ export function LandingPage() {
                 weight="fill"
               />
               <p className="text-sm text-normal">
-                Vibe Kanban runs AI coding agents with{' '}
+                Kanban Crew runs AI coding agents with{' '}
                 <code>--dangerously-skip-permissions</code> /{' '}
                 <code>--yolo</code> by default. Always review what agents are
                 doing.{' '}
                 <a
-                  href="https://www.vibekanban.com/docs/getting-started#safety-notice"
+                  href="https://www.kanbancrew.com/docs/getting-started#safety-notice"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-brand hover:underline"
@@ -552,7 +552,7 @@ export function LandingPage() {
           <p className="text-xs text-low">
             By continuing you agree to the{' '}
             <a
-              href="https://www.vibekanban.com/terms"
+              href="https://www.kanbancrew.com/terms"
               target="_blank"
               rel="noopener noreferrer"
               className="text-brand hover:underline"
@@ -561,7 +561,7 @@ export function LandingPage() {
             </a>{' '}
             and{' '}
             <a
-              href="https://www.vibekanban.com/privacy"
+              href="https://www.kanbancrew.com/privacy"
               target="_blank"
               rel="noopener noreferrer"
               className="text-brand hover:underline"

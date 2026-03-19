@@ -149,7 +149,7 @@ pub fn router() -> Router<DeploymentImpl> {
         .route("/branch", axum::routing::put(rename_branch))
 }
 
-async fn resolve_vibe_kanban_identifier(
+async fn resolve_kanban_crew_identifier(
     deployment: &DeploymentImpl,
     local_workspace_id: Uuid,
 ) -> String {
@@ -284,8 +284,8 @@ pub async fn merge_workspace(
     }
 
     let workspace_label = workspace.name.as_deref().unwrap_or(&workspace.branch);
-    let vk_id = resolve_vibe_kanban_identifier(&deployment, workspace.id).await;
-    let commit_message = format!("{} (vibe-kanban {})", workspace_label, vk_id);
+    let vk_id = resolve_kanban_crew_identifier(&deployment, workspace.id).await;
+    let commit_message = format!("{} (kanban-crew {})", workspace_label, vk_id);
 
     let mut merge_result = deployment.git().merge_changes(
         &repo.path,

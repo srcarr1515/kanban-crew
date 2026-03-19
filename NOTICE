@@ -1,0 +1,20 @@
+Kanban Crew
+Copyright 2026 srcarr1515
+
+This product is based on vibe-kanban (https://github.com/BloopAI/vibe-kanban),
+copyright 2024-2025 Bloop AI Ltd, licensed under the Apache License, Version 2.0.
+
+A copy of the Apache License is included in the LICENSE file in this repository.
+
+---
+
+Kanban Crew includes modifications to the original vibe-kanban codebase,
+including but not limited to:
+
+- Rebranding and product identity changes
+- AI crew member assignment and management features
+- Chat and crew member tooling enhancements
+- Cloud sync and PWA architecture (in development)
+
+The original vibe-kanban source is available at:
+https://github.com/BloopAI/vibe-kanban

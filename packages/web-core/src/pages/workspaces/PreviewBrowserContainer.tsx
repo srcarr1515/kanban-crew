@@ -672,7 +672,7 @@ export function PreviewBrowserContainer({
 
     iframe.contentWindow.postMessage(
       {
-        source: 'vibe-kanban',
+        source: 'kanban-crew',
         command: visible ? 'show-eruda' : 'hide-eruda',
       },
       '*'
@@ -746,11 +746,11 @@ export function PreviewBrowserContainer({
       const devServerPort =
         parsed.port || (parsed.protocol === 'https:' ? '443' : '80');
 
-      // Don't proxy to Vibe Kanban's own ports (would create infinite loop)
-      const vibeKanbanPort = window.location.port || '80';
-      if (devServerPort === vibeKanbanPort) {
+      // Don't proxy to Kanban Crew's own ports (would create infinite loop)
+      const kanbanCrewPort = window.location.port || '80';
+      if (devServerPort === kanbanCrewPort) {
         console.warn(
-          `[Preview] Ignoring dev server URL with same port as Vibe Kanban (${devServerPort}). ` +
+          `[Preview] Ignoring dev server URL with same port as Kanban Crew (${devServerPort}). ` +
             'This usually means the dev server failed to start or reported the wrong port.'
         );
         return undefined;

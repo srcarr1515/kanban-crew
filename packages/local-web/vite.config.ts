@@ -108,7 +108,7 @@ export default defineConfig({
         ],
       },
     }),
-    sentryVitePlugin({ org: 'bloop-ai', project: 'vibe-kanban' }),
+    // sentryVitePlugin({ org: 'kanbancrew', project: 'kanban-crew' }),
     executorSchemasPlugin(),
   ],
   resolve: {
