@@ -41,6 +41,7 @@ import {
   type ExecutionStatus,
   type SessionChatBoxEditorRenderProps,
 } from '@vibe/ui/components/SessionChatBox';
+import type { ChatToolbarPresetProps } from '@vibe/ui/components/ChatToolbar';
 import { ModelSelectorContainer } from '@/shared/components/ModelSelectorContainer';
 import {
   useWorkspacePanelState,
@@ -900,6 +901,15 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     [config?.send_message_shortcut, sessionId]
   );
 
+  const presetProp = useMemo<ChatToolbarPresetProps | undefined>(() => {
+    if (variantOptions.length === 0) return undefined;
+    return {
+      selected: selectedVariant,
+      options: variantOptions.map((v) => ({ id: v, label: toPrettyCase(v) })),
+      onChange: setSelectedVariant,
+    };
+  }, [variantOptions, selectedVariant, setSelectedVariant]);
+
   const modelSelectorNode = effectiveExecutor ? (
     <ModelSelectorContainer
       agent={effectiveExecutor}
@@ -912,6 +922,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       onOverrideChange={setExecutorOverrides}
       executorConfig={executorConfig}
       presetOptions={presetOptions}
+      hidePresets={!!presetProp}
     />
   ) : undefined;
 
@@ -1025,6 +1036,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       agent={effectiveExecutor}
       todos={todos}
       inProgressTodo={inProgressTodo}
+      preset={presetProp}
       executor={
         needsExecutorSelection
           ? {

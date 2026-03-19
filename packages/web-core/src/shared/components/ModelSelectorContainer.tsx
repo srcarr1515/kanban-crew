@@ -55,6 +55,8 @@ interface ModelSelectorContainerProps {
   onOverrideChange: (partial: Partial<ExecutorConfig>) => void;
   executorConfig: ExecutorConfig | null;
   presetOptions: ExecutorConfig | null | undefined;
+  /** When true, hides the preset dropdown (e.g. when presets are rendered by ChatToolbar). */
+  hidePresets?: boolean;
 }
 
 export function ModelSelectorContainer({
@@ -68,6 +70,7 @@ export function ModelSelectorContainer({
   onOverrideChange,
   executorConfig,
   presetOptions,
+  hidePresets = false,
 }: ModelSelectorContainerProps) {
   const { t } = useTranslation('common');
   const { theme } = useTheme();
@@ -444,21 +447,25 @@ export function ModelSelectorContainer({
           showCaret={false}
         />
         <DropdownMenuContent align="start">
-          <DropdownMenuLabel>{t('modelSelector.preset')}</DropdownMenuLabel>
-          {presets.length > 0 ? (
-            presets.map((preset) => (
-              <DropdownMenuItem
-                key={preset}
-                icon={preset === resolvedPreset ? CheckIcon : undefined}
-                onClick={() => onPresetSelect?.(preset)}
-              >
-                {toPrettyCase(preset)}
-              </DropdownMenuItem>
-            ))
-          ) : (
-            <DropdownMenuItem disabled>{presetLabel}</DropdownMenuItem>
+          {!hidePresets && (
+            <>
+              <DropdownMenuLabel>{t('modelSelector.preset')}</DropdownMenuLabel>
+              {presets.length > 0 ? (
+                presets.map((preset) => (
+                  <DropdownMenuItem
+                    key={preset}
+                    icon={preset === resolvedPreset ? CheckIcon : undefined}
+                    onClick={() => onPresetSelect?.(preset)}
+                  >
+                    {toPrettyCase(preset)}
+                  </DropdownMenuItem>
+                ))
+              ) : (
+                <DropdownMenuItem disabled>{presetLabel}</DropdownMenuItem>
+              )}
+              <DropdownMenuSeparator />
+            </>
           )}
-          <DropdownMenuSeparator />
           <DropdownMenuItem icon={GearIcon} onClick={onAdvancedSettings}>
             {t('modelSelector.custom')}
           </DropdownMenuItem>
