@@ -64,10 +64,10 @@ export function OnboardingSignInPage() {
     [posthog]
   );
 
-  const logoSrc =
-    resolveTheme(theme) === 'dark'
-      ? '/kanban-crew-logo-dark.svg'
-      : '/kanban-crew-logo.svg';
+  // const logoSrc =
+  //   resolveTheme(theme) === 'dark'
+  //     ? '/kanban-crew-logo-dark.svg'
+  //     : '/kanban-crew-logo.svg';
 
   const isLoggedIn = loginStatus?.status === 'loggedin';
 
