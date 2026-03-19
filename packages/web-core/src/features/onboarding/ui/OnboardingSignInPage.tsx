@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
-import { ThemeMode } from 'shared/types';
 import { usePostHog } from 'posthog-js/react';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
-import { useTheme } from '@/shared/hooks/useTheme';
 import { OAuthSignInButton } from '@vibe/ui/components/OAuthButtons';
 import { PrimaryButton } from '@vibe/ui/components/PrimaryButton';
 import { getFirstProjectDestination } from '@/shared/lib/firstProjectDestination';
@@ -31,19 +29,9 @@ type SignInCompletionMethod =
   | 'skip_sign_in'
   | 'oauth_github'
   | 'oauth_google';
-function resolveTheme(theme: ThemeMode): 'light' | 'dark' {
-  if (theme === ThemeMode.SYSTEM) {
-    return window.matchMedia('(prefers-color-scheme: dark)').matches
-      ? 'dark'
-      : 'light';
-  }
-  return theme === ThemeMode.DARK ? 'dark' : 'light';
-}
-
 export function OnboardingSignInPage() {
   const appNavigation = useAppNavigation();
   const { t } = useTranslation('common');
-  const { theme } = useTheme();
   const posthog = usePostHog();
   const { config, loginStatus, loading, updateAndSaveConfig } = useUserSystem();
   const setSelectedOrgId = useOrganizationStore((s) => s.setSelectedOrgId);
