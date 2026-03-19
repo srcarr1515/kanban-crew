@@ -1,14 +1,62 @@
+import { getAuthRuntime } from '@/shared/lib/auth/runtime';
 import { makeLocalApiRequest } from '@/shared/lib/localApiTransport';
 
 interface ApiResponse<T> {
   data: T;
 }
 
+/**
+ * Build request headers with auth token (when available).
+ * Matches the makeAuthenticatedRequest pattern from remoteApi.ts.
+ */
+async function buildAuthHeaders(
+  extra: HeadersInit = {}
+): Promise<Record<string, string>> {
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(extra as Record<string, string>),
+  };
+  try {
+    const token = await getAuthRuntime().getToken();
+    if (token) {
+      headers['Authorization'] = `Bearer ${token}`;
+    }
+  } catch {
+    // Auth runtime may not be configured (e.g. in tests) — proceed without token
+  }
+  return headers;
+}
+
+/**
+ * Make an authenticated local API request with 401 retry.
+ * On a 401 response, triggers a token refresh and retries once.
+ */
+async function makeAuthenticatedLocalRequest(
+  path: string,
+  init: RequestInit = {}
+): Promise<Response> {
+  const headers = await buildAuthHeaders(
+    init.headers as Record<string, string>
+  );
+  const response = await makeLocalApiRequest(path, { ...init, headers });
+
+  if (response.status === 401) {
+    try {
+      const newToken = await getAuthRuntime().triggerRefresh();
+      if (newToken) {
+        headers['Authorization'] = `Bearer ${newToken}`;
+        return makeLocalApiRequest(path, { ...init, headers });
+      }
+    } catch {
+      // Refresh failed — return original 401 response
+    }
+  }
+
+  return response;
+}
+
 async function chatFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await makeLocalApiRequest(path, {
-    ...init,
-    headers: { 'Content-Type': 'application/json', ...init.headers },
-  });
+  const res = await makeAuthenticatedLocalRequest(path, init);
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`Chat API error ${res.status}: ${body}`);
@@ -161,15 +209,17 @@ export async function* streamChatCompletion(
   if (crewMemberId) body.crew_member_id = crewMemberId;
   if (attachments && attachments.length > 0) body.images = attachments;
 
-  const res = await makeLocalApiRequest('/api/local/chat/completions', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
+  const res = await makeAuthenticatedLocalRequest(
+    '/api/local/chat/completions',
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }
+  );
 
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`Chat completion error ${res.status}: ${body}`);
+    const errBody = await res.text();
+    throw new Error(`Chat completion error ${res.status}: ${errBody}`);
   }
 
   const reader = res.body?.getReader();
@@ -188,13 +238,13 @@ export async function* streamChatCompletion(
 
       try {
         const event = JSON.parse(data);
-        if (
-          event.type === 'content_block_delta' &&
-          event.delta?.text
-        ) {
+        if (event.type === 'content_block_delta' && event.delta?.text) {
           yield { type: 'text', text: event.delta.text };
         } else if (event.type === 'vision_fallback' && event.metadata) {
-          yield { type: 'vision_fallback', info: event.metadata as VisionFallbackInfo };
+          yield {
+            type: 'vision_fallback',
+            info: event.metadata as VisionFallbackInfo,
+          };
         }
       } catch {
         // Skip non-JSON lines
@@ -285,7 +335,10 @@ export function extractQueryBlocks(content: string): QueryBlock[] {
 }
 
 /** Execute a read-only SQL query against the database. */
-export function executeQuery(sql: string, crewMemberId?: string): Promise<QueryResult> {
+export function executeQuery(
+  sql: string,
+  crewMemberId?: string
+): Promise<QueryResult> {
   return chatFetch<QueryResult>('/api/local/chat/query', {
     method: 'POST',
     body: JSON.stringify({ sql, crew_member_id: crewMemberId ?? null }),
@@ -294,14 +347,25 @@ export function executeQuery(sql: string, crewMemberId?: string): Promise<QueryR
 
 const ARTIFACT_BLOCK_REGEX = /```artifact\n([\s\S]*?)\n```/g;
 
-const VALID_ARTIFACT_TYPES = ['spec', 'test_plan', 'bug_report', 'design_notes', 'review', 'other'];
+const VALID_ARTIFACT_TYPES = [
+  'spec',
+  'test_plan',
+  'bug_report',
+  'design_notes',
+  'review',
+  'other',
+];
 
 /** Normalize a raw parsed object into an ArtifactBlock, returning null if invalid. */
 function normalizeArtifact(raw: unknown): ArtifactBlock | null {
   if (!raw || typeof raw !== 'object') return null;
   const a = raw as Record<string, unknown>;
   if (typeof a.title !== 'string' || !a.title.trim()) return null;
-  if (typeof a.artifact_type !== 'string' || !VALID_ARTIFACT_TYPES.includes(a.artifact_type)) return null;
+  if (
+    typeof a.artifact_type !== 'string' ||
+    !VALID_ARTIFACT_TYPES.includes(a.artifact_type)
+  )
+    return null;
   return {
     artifact_type: a.artifact_type,
     title: a.title.trim(),
