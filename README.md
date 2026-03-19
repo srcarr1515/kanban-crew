@@ -1,4 +1,4 @@
-<p align="center">
+<!--<p align="center">
   <a href="https://kanbancrew.com">
     <picture>
       <source srcset="packages/public/kanban-crew-logo-dark.svg" media="(prefers-color-scheme: dark)">
@@ -6,66 +6,71 @@
       <img src="packages/public/kanban-crew-logo.svg" alt="Kanban Crew Logo">
     </picture>
   </a>
-</p>
+</p>-->
 
-<p align="center">Get 10X more out of Claude Code, Gemini CLI, Codex, Amp and other coding agents...</p>
+<p align="center">A local-first kanban board for solo developers running AI agent crews</p>
+<p align="center"><strong>⚠️ Work in progress — not ready for general use yet.</strong></p>
 <p align="center">
   <a href="https://www.npmjs.com/package/kanban-crew"><img alt="npm" src="https://img.shields.io/npm/v/kanban-crew?style=flat-square" /></a>
-  <a href="https://github.com/srcarr1515/kanban-crew/blob/main/.github/workflows/publish.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/srcarr1515/kanban-crew/.github%2Fworkflows%2Fpublish.yml" /></a>
-  <a href="https://deepwiki.com/srcarr1515/kanban-crew"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
+  <a href="https://github.com/srcarr1515/kanban-crew/blob/main/.github/workflows/pre-release.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/srcarr1515/kanban-crew/.github%2Fworkflows%2Fpre-release.yml" /></a>
 </p>
-
-<h1 align="center">
-  <a href="https://jobs.polymer.co/kanban-crew?source=github"><strong>We're hiring!</strong></a>
-</h1>
-
-![](packages/public/kanban-crew-screenshot-overview.png)
 
 ## Overview
 
-In a world where software engineers spend most of their time planning and reviewing coding agents, the most impactful way to ship more is to get faster at planning and review.
+Kanban Crew is a local-first task manager built for developers who run AI agent crews. Instead of context-switching between your terminal, editor, and a browser tab full of sticky notes, Kanban Crew gives your agents a proper home: a board where you plan the work, assign it to agents, watch them execute, and review the output — all without leaving your machine.
 
-Kanban Crew is built for this. Use kanban issues to plan work, either privately or with your team. When you're ready to begin, create workspaces where coding agents can execute.
+No account required. No data leaves your computer. Your board lives in a local SQLite database.
 
-- **Plan with kanban issues** — create, prioritise, and assign issues on a kanban board
-- **Run coding agents in workspaces** — each workspace gives an agent a branch, a terminal, and a dev server
-- **Review diffs and leave inline comments** — send feedback directly to the agent without leaving the UI
+- **Plan with a kanban board** — create, prioritize, and organize tasks across columns
+- **Assign tasks to AI agents** — designate which agent owns each ticket and track execution
+- **Run agents in workspaces** — each workspace gives an agent its own branch, terminal, and dev server
+- **Review diffs and leave inline comments** — send feedback directly back to the agent
 - **Preview your app** — built-in browser with devtools, inspect mode, and device emulation
-- **Switch between 10+ coding agents** — Claude Code, Codex, Gemini CLI, GitHub Copilot, Amp, Cursor, OpenCode, Droid, CCR, and Qwen Code
-- **Create pull requests and merge** — open PRs with AI-generated descriptions, review on GitHub, and merge
+<!--- **10+ coding agents supported** — Claude Code, Codex, Gemini CLI, GitHub Copilot, Amp, Cursor, OpenCode, Droid, CCR, Qwen Code-->
+- **MCP server included** — expose your board to agents via the Model Context Protocol
+<!--- **Create pull requests and merge** — open PRs with AI-generated descriptions, review, and merge-->
 
-![](packages/public/kanban-crew-screenshot-workspace.png)
-
-One command. Describe the work, review the diff, ship it.
+One command to start:
 
 ```bash
 npx kanban-crew
 ```
-
 
 ## Installation
 
-Make sure you have authenticated with your favourite coding agent. A full list of supported coding agents can be found in the [docs](https://kanbancrew.com/docs/supported-coding-agents). Then in your terminal run:
+Make sure you have authenticated with your coding agent of choice. Then run:
 
 ```bash
 npx kanban-crew
 ```
 
-## Documentation
+The first run downloads a pre-compiled binary (~30MB) and caches it at `~/.kanban-crew/`. Subsequent runs start instantly.
 
-Head to the [website](https://kanbancrew.com/docs) for the latest documentation and user guides.
+### Desktop app (optional)
 
-## Self-Hosting
+```bash
+npx kanban-crew --desktop
+```
 
-Want to host your own Kanban Crew Cloud instance? See our [self-hosting guide](https://kanbancrew.com/docs/self-hosting/deploy-docker).
+Launches the native desktop app instead of opening a browser tab.
+
+## MCP Integration
+
+Kanban Crew ships an MCP server so your agents can read and update your board directly.
+
+```bash
+npx kanban-crew mcp
+```
+
+Add it to your Claude Code, Cursor, or other MCP-compatible client to give agents full board access.
 
 ## Support
 
-We use [GitHub Discussions](https://github.com/srcarr1515/kanban-crew/discussions) for feature requests. Please open a discussion to create a feature request. For bugs please open an issue on this repo.
+Open an issue or start a discussion on [GitHub](https://github.com/srcarr1515/kanban-crew/discussions).
 
 ## Contributing
 
-We would prefer that ideas and changes are first raised with the core team via [GitHub Discussions](https://github.com/srcarr1515/kanban-crew/discussions) or [Discord](https://discord.gg/AC4nwVtJM3), where we can discuss implementation details and alignment with the existing roadmap. Please do not open PRs without first discussing your proposal with the team.
+This is a solo project — feel free to open issues or PRs. For larger changes, open a discussion first so we can align before you invest the time.
 
 ## Development
 
@@ -75,7 +80,7 @@ We would prefer that ideas and changes are first raised with the core team via [
 - [Node.js](https://nodejs.org/) (>=20)
 - [pnpm](https://pnpm.io/) (>=8)
 
-Additional development tools:
+Additional tools:
 ```bash
 cargo install cargo-watch
 cargo install sqlx-cli
@@ -92,71 +97,52 @@ pnpm i
 pnpm run dev
 ```
 
-This will start the backend and web app. A blank DB will be copied from the `dev_assets_seed` folder.
+Starts the backend and web app. A blank DB is copied from `dev_assets_seed/` on first run.
 
 ### Building the web app
-
-To build just the web app:
 
 ```bash
 cd packages/local-web
 pnpm run build
 ```
 
-### Build from source (macOS)
+### Build from source
 
-1. Run `./local-build.sh`
-2. Test with `cd npx-cli && node bin/cli.js`
+```bash
+./local-build.sh
+# Test with:
+cd npx-cli && node bin/cli.js
+```
 
 ### Environment Variables
 
-The following environment variables can be configured at build time or runtime:
-
 | Variable | Type | Default | Description |
 |----------|------|---------|-------------|
-| `POSTHOG_API_KEY` | Build-time | Empty | PostHog analytics API key (disables analytics if empty) |
-| `POSTHOG_API_ENDPOINT` | Build-time | Empty | PostHog analytics endpoint (disables analytics if empty) |
-| `PORT` | Runtime | Auto-assign | **Production**: Server port. **Dev**: Frontend port (backend uses PORT+1) |
-| `BACKEND_PORT` | Runtime | `0` (auto-assign) | Backend server port (dev mode only, overrides PORT+1) |
-| `FRONTEND_PORT` | Runtime | `3000` | Frontend dev server port (dev mode only, overrides PORT) |
+| `PORT` | Runtime | Auto | Server port (prod). Frontend port in dev (backend uses PORT+1) |
+| `BACKEND_PORT` | Runtime | `0` (auto) | Backend port in dev mode |
+| `FRONTEND_PORT` | Runtime | `3000` | Frontend dev server port |
 | `HOST` | Runtime | `127.0.0.1` | Backend server host |
-| `MCP_HOST` | Runtime | Value of `HOST` | MCP server connection host (use `127.0.0.1` when `HOST=0.0.0.0` on Windows) |
-| `MCP_PORT` | Runtime | Value of `BACKEND_PORT` | MCP server connection port |
-| `DISABLE_WORKTREE_CLEANUP` | Runtime | Not set | Disable all git worktree cleanup including orphan and expired workspace cleanup (for debugging) |
-| `VK_ALLOWED_ORIGINS` | Runtime | Not set | Comma-separated list of origins that are allowed to make backend API requests (e.g., `https://my-kanbancrew-frontend.com`) |
-| `VK_SHARED_API_BASE` | Runtime | Not set | Base URL for the remote/cloud API used by the local desktop app |
-| `VK_SHARED_RELAY_API_BASE` | Runtime | Not set | Base URL for the relay API used by tunnel-mode connections |
-| `VK_TUNNEL` | Runtime | Not set | Enable relay tunnel mode when set (requires relay API base URL) |
+| `MCP_HOST` | Runtime | Value of `HOST` | MCP connection host |
+| `MCP_PORT` | Runtime | Value of `BACKEND_PORT` | MCP connection port |
+| `KANBAN_CREW_DEBUG` | Runtime | Not set | Enable verbose debug logging |
+| `KANBAN_CREW_LOCAL` | Runtime | Not set | Force local dev mode (use binaries from `npx-cli/dist/`) |
+| `DISABLE_WORKTREE_CLEANUP` | Runtime | Not set | Disable git worktree cleanup (for debugging) |
+| `KC_ALLOWED_ORIGINS` | Runtime | Not set | Comma-separated allowed origins for API requests (required when running behind a reverse proxy) |
 
-**Build-time variables** must be set when running `pnpm run build`. **Runtime variables** are read when the application starts.
+### Running behind a reverse proxy
 
-#### Self-Hosting with a Reverse Proxy or Custom Domain
-
-When running Kanban Crew behind a reverse proxy (e.g., nginx, Caddy, Traefik) or on a custom domain, you must set the `VK_ALLOWED_ORIGINS` environment variable. Without this, the browser's Origin header won't match the backend's expected host, and API requests will be rejected with a 403 Forbidden error.
-
-Set it to the full origin URL(s) where your frontend is accessible:
+Set `KC_ALLOWED_ORIGINS` to the full origin URL where your frontend is accessible:
 
 ```bash
 # Single origin
-VK_ALLOWED_ORIGINS=https://vk.example.com
+KC_ALLOWED_ORIGINS=https://kanban.example.com
 
-# Multiple origins (comma-separated)
-VK_ALLOWED_ORIGINS=https://vk.example.com,https://vk-staging.example.com
+# Multiple origins
+KC_ALLOWED_ORIGINS=https://kanban.example.com,https://kanban-staging.example.com
 ```
 
-### Remote Deployment
+Without this, the browser's `Origin` header won't match and API requests will return `403 Forbidden`.
 
-When running Kanban Crew on a remote server (e.g., via systemctl, Docker, or cloud hosting), you can configure your editor to open projects via SSH:
+## Attribution
 
-1. **Access via tunnel**: Use Cloudflare Tunnel, ngrok, or similar to expose the web UI
-2. **Configure remote SSH** in Settings → Editor Integration:
-   - Set **Remote SSH Host** to your server hostname or IP
-   - Set **Remote SSH User** to your SSH username (optional)
-3. **Prerequisites**:
-   - SSH access from your local machine to the remote server
-   - SSH keys configured (passwordless authentication)
-   - VSCode Remote-SSH extension
-
-When configured, the "Open in VSCode" buttons will generate URLs like `vscode://vscode-remote/ssh-remote+user@host/path` that open your local editor and connect to the remote server.
-
-See the [documentation](https://kanbancrew.com/docs/settings/general) for detailed setup instructions.
+Kanban Crew is a fork of [vibe-kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI Ltd, used under the Apache 2.0 License. See [NOTICE](./NOTICE) for details.
