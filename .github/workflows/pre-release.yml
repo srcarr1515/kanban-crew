@@ -733,6 +733,13 @@ jobs:
           sed -i "s|__BINARY_TAG__|${{ needs.bump-version.outputs.new_tag }}|g" bin/cli.js
           npm pack
 
+      - name: Publish to npm
+        run: |
+          cd npx-cli
+          npm publish --tag next --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       - name: Create GitHub Pre-Release
         id: create-release
         uses: softprops/action-gh-release@v2

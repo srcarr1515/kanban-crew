@@ -1,5 +1,4 @@
 // vite.config.ts
-import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { createLogger, defineConfig, Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
