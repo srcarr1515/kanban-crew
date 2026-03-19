@@ -118,12 +118,14 @@ jobs:
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
+          # Sync with remote before committing so the push is a clean fast-forward
+          git fetch origin main
+          git rebase origin/main
           git add package.json pnpm-lock.yaml npx-cli/package.json packages/local-web/package.json crates/tauri-app/tauri.conf.json Cargo.lock
           git add $(find . -name Cargo.toml)
           [ -f crates/relay-tunnel/Cargo.lock ] && git add crates/relay-tunnel/Cargo.lock || true
           git commit -m "chore: bump version to ${{ steps.version.outputs.new_version }}"
           git tag -a ${{ steps.version.outputs.new_tag }} -m "Release ${{ steps.version.outputs.new_tag }}"
-          git pull --rebase origin main
           git push
           git push --tags
 
