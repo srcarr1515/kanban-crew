@@ -1,20 +1,19 @@
 import {
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react';
 import {
   ArrowsInSimpleIcon,
   ArrowsOutSimpleIcon,
-  CaretDownIcon,
   CircleNotchIcon,
   PaperclipIcon,
   PaperPlaneRightIcon,
   PlusIcon,
   StopIcon,
   TrashIcon,
-  UserCircleIcon,
   XIcon,
 } from '@phosphor-icons/react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -30,10 +29,11 @@ import {
   type ChatThread,
   type VisionFallbackInfo,
 } from '@/shared/lib/local/chatApi';
+import { listCrewMembers } from '@/shared/lib/local/localApi';
 import {
-  listCrewMembers,
-  type CrewMember,
-} from '@/shared/lib/local/localApi';
+  ChatToolbar,
+  type ChatToolbarCrewMemberProps,
+} from '@vibe/ui/components/ChatToolbar';
 import { ChatMessageBubble, StreamingMessage } from './ChatMessage';
 import { useChatStore } from './useChatStore';
 
@@ -47,7 +47,6 @@ export function ChatPanel() {
   const [optimisticText, setOptimisticText] = useState<string | null>(null);
   const [optimisticImages, setOptimisticImages] = useState<Array<{ dataUrl: string; mimeType: string }>>([]);
   const [selectedCrewId, setSelectedCrewId] = useState<string | null>(null);
-  const [showCrewPicker, setShowCrewPicker] = useState(false);
   const [attachments, setAttachments] = useState<Array<{ id: string; dataUrl: string; mimeType: string; name: string }>>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -56,7 +55,6 @@ export function ChatPanel() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const abortRef = useRef(false);
-  const crewPickerRef = useRef<HTMLDivElement>(null);
 
   // ── Crew members ──────────────────────────────────────────────
   const { data: crewMembers = [] } = useQuery({
@@ -281,6 +279,21 @@ export function ChatPanel() {
     ? (crewMembers.find((m) => m.id === selectedCrewId) ?? null)
     : null;
 
+  const crewMemberProp = useMemo<ChatToolbarCrewMemberProps | undefined>(() => {
+    if (crewMembers.length === 0) return undefined;
+    return {
+      selected: selectedCrewId,
+      options: crewMembers.map((m) => ({
+        id: m.id,
+        name: m.name,
+        avatar: m.avatar,
+        role: m.role,
+      })),
+      onChange: setSelectedCrewId,
+      locked: isCrewLocked,
+    };
+  }, [crewMembers, selectedCrewId, isCrewLocked]);
+
   return (
     <div
       className="relative flex flex-col h-full bg-primary"
@@ -412,96 +425,91 @@ export function ChatPanel() {
 
       {/* Input area */}
       <div className="shrink-0 border-t p-2 space-y-2">
-        {/* Crew member picker / locked badge */}
-        {isCrewLocked ? (
-          <LockedCrewBadge crewMember={lockedCrewMember} />
-        ) : (
-          <CrewMemberPicker
-            crewMembers={crewMembers}
-            selectedCrewId={selectedCrewId}
-            onSelect={setSelectedCrewId}
-            showPicker={showCrewPicker}
-            setShowPicker={setShowCrewPicker}
-            pickerRef={crewPickerRef}
-          />
-        )}
+        <ChatToolbar
+          crewMember={crewMemberProp}
+          editorNode={
+            <div className="space-y-2">
+              {/* Attachment thumbnails */}
+              {attachments.length > 0 && (
+                <div className="flex flex-wrap gap-2 px-1">
+                  {attachments.map((att) => (
+                    <div key={att.id} className="relative group">
+                      <img
+                        src={att.dataUrl}
+                        alt={att.name}
+                        className="h-16 w-16 object-cover rounded-md border border-border"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
+                        className="absolute -top-1 -right-1 size-4 rounded-full bg-panel border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Remove"
+                      >
+                        <XIcon className="size-2.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
 
-        {/* Attachment thumbnails */}
-        {attachments.length > 0 && (
-          <div className="flex flex-wrap gap-2 px-1">
-            {attachments.map((att) => (
-              <div key={att.id} className="relative group">
-                <img
-                  src={att.dataUrl}
-                  alt={att.name}
-                  className="h-16 w-16 object-cover rounded-md border border-border"
+              <div className="flex items-end gap-2">
+                {/* Hidden file input */}
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    processFiles(Array.from(e.target.files ?? []));
+                    e.target.value = '';
+                  }}
                 />
                 <button
                   type="button"
-                  onClick={() => setAttachments((prev) => prev.filter((a) => a.id !== att.id))}
-                  className="absolute -top-1 -right-1 size-4 rounded-full bg-panel border border-border flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity"
-                  title="Remove"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!activeThreadId || isStreaming}
+                  className="shrink-0 p-2 text-low hover:text-normal hover:bg-secondary rounded-lg transition-colors disabled:opacity-40"
+                  title="Attach image"
                 >
-                  <XIcon className="size-2.5" />
+                  <PaperclipIcon className="size-4" />
+                </button>
+                <textarea
+                  ref={inputRef}
+                  value={input}
+                  onChange={(e) => setInput(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder={activeThreadId ? 'Ask anything...' : 'Create a thread to start'}
+                  disabled={!activeThreadId || isStreaming}
+                  rows={4}
+                  className="flex-1 resize-none rounded-lg border bg-secondary px-3 py-2 text-sm text-high placeholder:text-low focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-50"
+                />
+                <button
+                  type="button"
+                  onClick={isStreaming ? () => { abortRef.current = true; } : handleSend}
+                  disabled={!isStreaming && ((!input.trim() && attachments.length === 0) || !activeThreadId)}
+                  className={`shrink-0 rounded-lg p-2 text-white transition-colors ${
+                    isStreaming
+                      ? 'bg-brand hover:bg-red-500'
+                      : 'bg-brand hover:bg-brand/90 disabled:opacity-40'
+                  }`}
+                  title={isStreaming ? 'Stop generating' : 'Send'}
+                >
+                  {isStreaming ? (
+                    <span className="relative flex size-4 items-center justify-center">
+                      <CircleNotchIcon className="size-4 animate-spin" weight="bold" />
+                      <StopIcon className="absolute size-2" weight="fill" />
+                    </span>
+                  ) : (
+                    <PaperPlaneRightIcon className="size-4" weight="fill" />
+                  )}
                 </button>
               </div>
-            ))}
-          </div>
-        )}
-
-        <div className="flex items-end gap-2">
-          {/* Hidden file input */}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => {
-              processFiles(Array.from(e.target.files ?? []));
-              e.target.value = '';
-            }}
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={!activeThreadId || isStreaming}
-            className="shrink-0 p-2 text-low hover:text-normal hover:bg-secondary rounded-lg transition-colors disabled:opacity-40"
-            title="Attach image"
-          >
-            <PaperclipIcon className="size-4" />
-          </button>
-          <textarea
-            ref={inputRef}
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={activeThreadId ? 'Ask anything...' : 'Create a thread to start'}
-            disabled={!activeThreadId || isStreaming}
-            rows={4}
-            className="flex-1 resize-none rounded-lg border bg-secondary px-3 py-2 text-sm text-high placeholder:text-low focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-50"
-          />
-          <button
-            type="button"
-            onClick={isStreaming ? () => { abortRef.current = true; } : handleSend}
-            disabled={!isStreaming && ((!input.trim() && attachments.length === 0) || !activeThreadId)}
-            className={`shrink-0 rounded-lg p-2 text-white transition-colors ${
-              isStreaming
-                ? 'bg-brand hover:bg-red-500'
-                : 'bg-brand hover:bg-brand/90 disabled:opacity-40'
-            }`}
-            title={isStreaming ? 'Stop generating' : 'Send'}
-          >
-            {isStreaming ? (
-              <span className="relative flex size-4 items-center justify-center">
-                <CircleNotchIcon className="size-4 animate-spin" weight="bold" />
-                <StopIcon className="absolute size-2" weight="fill" />
-              </span>
-            ) : (
-              <PaperPlaneRightIcon className="size-4" weight="fill" />
-            )}
-          </button>
-        </div>
+            </div>
+          }
+          disabled={!activeThreadId || isStreaming}
+          className="border-0 rounded-none bg-transparent"
+        />
       </div>
     </div>
   );
@@ -542,147 +550,3 @@ function ThreadTab({
   );
 }
 
-function LockedCrewBadge({ crewMember }: { crewMember: CrewMember | null }) {
-  const isImageAvatar = (avatar?: string) =>
-    avatar?.startsWith('data:') || avatar?.startsWith('http');
-
-  return (
-    <div className="flex items-center gap-2 px-2 py-1 rounded-md text-xs text-low">
-      {crewMember ? (
-        <>
-          <div className="flex items-center justify-center w-5 h-5 rounded-full overflow-hidden bg-brand/20 text-brand text-[10px] font-medium shrink-0">
-            {isImageAvatar(crewMember.avatar) ? (
-              <img src={crewMember.avatar} alt={crewMember.name} className="w-full h-full object-cover" />
-            ) : (
-              crewMember.avatar || crewMember.name.charAt(0).toUpperCase()
-            )}
-          </div>
-          <span className="font-medium text-normal">{crewMember.name}</span>
-          <span className="text-low">· locked</span>
-        </>
-      ) : (
-        <>
-          <UserCircleIcon className="size-4" weight="bold" />
-          <span>Default AI · locked</span>
-        </>
-      )}
-    </div>
-  );
-}
-
-function CrewMemberPicker({
-  crewMembers,
-  selectedCrewId,
-  onSelect,
-  showPicker,
-  setShowPicker,
-  pickerRef,
-}: {
-  crewMembers: CrewMember[];
-  selectedCrewId: string | null;
-  onSelect: (id: string | null) => void;
-  showPicker: boolean;
-  setShowPicker: (show: boolean) => void;
-  pickerRef: React.RefObject<HTMLDivElement>;
-}) {
-  const selected = crewMembers.find((m) => m.id === selectedCrewId);
-
-  const isImageAvatar = (avatar?: string) =>
-    avatar?.startsWith('data:') || avatar?.startsWith('http');
-
-  useEffect(() => {
-    if (!showPicker) return;
-    const handleClickOutside = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setShowPicker(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClickOutside);
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showPicker, pickerRef, setShowPicker]);
-
-  return (
-    <div ref={pickerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setShowPicker(!showPicker)}
-        className="flex items-center gap-2 px-2 py-1 rounded-md text-xs text-low hover:text-normal hover:bg-secondary transition-colors cursor-pointer"
-      >
-        {selected ? (
-          <>
-            <div className="flex items-center justify-center w-5 h-5 rounded-full overflow-hidden bg-brand/20 text-brand text-[10px] font-medium shrink-0">
-              {isImageAvatar(selected.avatar) ? (
-                <img src={selected.avatar} alt={selected.name} className="w-full h-full object-cover" />
-              ) : (
-                selected.avatar || selected.name.charAt(0).toUpperCase()
-              )}
-            </div>
-            <span className="font-medium text-high">{selected.name}</span>
-          </>
-        ) : (
-          <>
-            <UserCircleIcon className="size-4" weight="bold" />
-            <span>No crew member</span>
-          </>
-        )}
-        <CaretDownIcon className="size-3" />
-      </button>
-
-      {showPicker && (
-        <div className="absolute bottom-full left-0 mb-1 z-50 bg-panel border border-border rounded-md shadow-lg min-w-[200px] py-1">
-          {/* Default option */}
-          <button
-            type="button"
-            onClick={() => {
-              onSelect(null);
-              setShowPicker(false);
-            }}
-            className={`flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors cursor-pointer ${
-              !selectedCrewId
-                ? 'bg-brand/10 text-brand'
-                : 'text-normal hover:bg-primary/10'
-            }`}
-          >
-            <UserCircleIcon className="size-5" weight="bold" />
-            <div className="text-left">
-              <p className="font-medium">Default AI</p>
-              <p className="text-xs text-low">No crew persona</p>
-            </div>
-          </button>
-
-          {crewMembers.length > 0 && (
-            <div className="border-t border-border my-1" />
-          )}
-
-          {crewMembers.map((member) => (
-            <button
-              key={member.id}
-              type="button"
-              onClick={() => {
-                onSelect(member.id);
-                setShowPicker(false);
-              }}
-              className={`flex items-center gap-2 w-full px-3 py-2 text-sm transition-colors cursor-pointer ${
-                selectedCrewId === member.id
-                  ? 'bg-brand/10 text-brand'
-                  : 'text-normal hover:bg-primary/10'
-              }`}
-            >
-              <div className="flex items-center justify-center w-5 h-5 rounded-full overflow-hidden bg-brand/20 text-brand text-[10px] font-medium shrink-0">
-                {isImageAvatar(member.avatar) ? (
-                  <img src={member.avatar} alt={member.name} className="w-full h-full object-cover" />
-                ) : (
-                  member.avatar || member.name.charAt(0).toUpperCase()
-                )}
-              </div>
-              <div className="text-left min-w-0">
-                <p className="font-medium truncate">{member.name}</p>
-                <p className="text-xs text-low truncate">{member.role}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}

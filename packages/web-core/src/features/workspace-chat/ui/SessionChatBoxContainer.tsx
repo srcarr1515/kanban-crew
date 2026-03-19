@@ -11,6 +11,8 @@ import {
 import { AgentIcon } from '@/shared/components/AgentIcon';
 import { useWorkspaceExecution } from '@/shared/hooks/useWorkspaceExecution';
 import { useWorkspaceRepo } from '@/shared/hooks/useWorkspaceRepo';
+import { useRepoBranches } from '@/shared/hooks/useRepoBranches';
+import { useChangeTargetBranch } from '@/shared/hooks/useChangeTargetBranch';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import WYSIWYGEditor from '@/shared/components/WYSIWYGEditor';
 import { useApprovalFeedbackOptional } from '../model/contexts/ApprovalFeedbackContext';
@@ -41,7 +43,10 @@ import {
   type ExecutionStatus,
   type SessionChatBoxEditorRenderProps,
 } from '@vibe/ui/components/SessionChatBox';
-import type { ChatToolbarPresetProps } from '@vibe/ui/components/ChatToolbar';
+import type {
+  ChatToolbarBranchProps,
+  ChatToolbarPresetProps,
+} from '@vibe/ui/components/ChatToolbar';
 import { ModelSelectorContainer } from '@/shared/components/ModelSelectorContainer';
 import {
   useWorkspacePanelState,
@@ -254,6 +259,14 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
   // Get repos for file search
   const { repos } = useWorkspaceRepo(workspaceId);
   const repoIds = repos.map((r) => r.id);
+  const primaryRepoId = repos[0]?.id;
+
+  // Branch selector data for toolbar
+  const { data: repoBranches = [] } = useRepoBranches(primaryRepoId);
+  const changeTargetBranch = useChangeTargetBranch(
+    workspaceId,
+    primaryRepoId
+  );
 
   // Approval feedback context
   const feedbackContext = useApprovalFeedbackOptional();
@@ -901,6 +914,32 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
     [config?.send_message_shortcut, sessionId]
   );
 
+  // Build branch selector prop for the toolbar
+  const selectedTargetBranch = branchStatus?.[0]?.target_branch_name ?? null;
+
+  const handleBranchChange = useCallback(
+    (branch: string) => {
+      if (!primaryRepoId) return;
+      changeTargetBranch.mutate({
+        newTargetBranch: branch,
+        repoId: primaryRepoId,
+      });
+    },
+    [primaryRepoId, changeTargetBranch]
+  );
+
+  const branchProp = useMemo<ChatToolbarBranchProps | undefined>(() => {
+    if (repoBranches.length === 0) return undefined;
+    return {
+      selected: selectedTargetBranch,
+      options: repoBranches.map((b) => ({
+        name: b.name,
+        isCurrent: b.is_current,
+      })),
+      onChange: handleBranchChange,
+    };
+  }, [repoBranches, selectedTargetBranch, handleBranchChange]);
+
   const presetProp = useMemo<ChatToolbarPresetProps | undefined>(() => {
     if (variantOptions.length === 0) return undefined;
     return {
@@ -1037,6 +1076,7 @@ export function SessionChatBoxContainer(props: SessionChatBoxContainerProps) {
       todos={todos}
       inProgressTodo={inProgressTodo}
       preset={presetProp}
+      branch={branchProp}
       executor={
         needsExecutorSelection
           ? {

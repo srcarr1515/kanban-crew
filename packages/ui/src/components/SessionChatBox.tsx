@@ -27,6 +27,7 @@ import {
 import {
   ChatToolbar,
   defaultExecutorLabel,
+  type ChatToolbarBranchProps,
   type ChatToolbarPresetProps,
 } from "./ChatToolbar";
 import { PrimaryButton } from "./PrimaryButton";
@@ -175,6 +176,7 @@ interface SessionChatBoxProps<TExecutor extends string = string> {
   agent?: TExecutor | null;
   executor?: ExecutorProps<TExecutor>;
   preset?: ChatToolbarPresetProps;
+  branch?: ChatToolbarBranchProps;
   formatExecutorLabel?: (executor: TExecutor) => string;
   emptyExecutorLabel?: string;
   renderAgentIcon?: (
@@ -231,6 +233,7 @@ export function SessionChatBox<TExecutor extends string = string>({
   agent,
   executor,
   preset,
+  branch,
   formatExecutorLabel = defaultExecutorLabel,
   emptyExecutorLabel = "Select Executor",
   renderAgentIcon,
@@ -661,6 +664,7 @@ export function SessionChatBox<TExecutor extends string = string>({
           emptyExecutorLabel={emptyExecutorLabel}
           modelSelector={isNewSessionMode ? modelSelector : undefined}
           preset={isNewSessionMode ? preset : undefined}
+          branch={isNewSessionMode ? branch : undefined}
           editorNode={renderEditor({
             focusKey,
             placeholder,
