@@ -143,6 +143,10 @@ KC_ALLOWED_ORIGINS=https://kanban.example.com,https://kanban-staging.example.com
 
 Without this, the browser's `Origin` header won't match and API requests will return `403 Forbidden`.
 
+## Disclaimer
+
+This software is provided "as is", without warranty of any kind. Kanban Crew creates git branches, worktrees, and runs shell commands on your machine as part of normal operation. **You are responsible for reviewing any changes before merging them.** The authors are not liable for any data loss, corrupted repositories, or other damages. See the [LICENSE](./LICENSE) for full terms.
+
 ## Attribution
 
 Kanban Crew is a fork of [vibe-kanban](https://github.com/BloopAI/vibe-kanban) by Bloop AI Ltd, used under the Apache 2.0 License. See [NOTICE](./NOTICE) for details.
