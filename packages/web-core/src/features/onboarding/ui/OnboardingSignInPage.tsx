@@ -1,11 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckIcon, XIcon } from '@phosphor-icons/react';
+import { toast } from 'sonner';
 import { useTranslation } from 'react-i18next';
 import { ThemeMode } from 'shared/types';
-import {
-  OAuthDialog,
-  type OAuthProvider,
-} from '@/shared/dialogs/global/OAuthDialog';
 import { usePostHog } from 'posthog-js/react';
 import { useUserSystem } from '@/shared/hooks/useUserSystem';
 import { useTheme } from '@/shared/hooks/useTheme';
@@ -19,29 +15,6 @@ import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
 type OnboardingDestination =
   | { kind: 'workspaces-create' }
   | { kind: 'project'; projectId: string };
-
-const COMPARISON_ROWS = [
-  {
-    feature: 'Use kanban board to track issues',
-    signedIn: true,
-    skip: false,
-  },
-  {
-    feature: 'Invite team to collaborate',
-    signedIn: true,
-    skip: false,
-  },
-  {
-    feature: 'Organise work into projects and organizations',
-    signedIn: true,
-    skip: false,
-  },
-  {
-    feature: 'Create workspaces',
-    signedIn: true,
-    skip: true,
-  },
-];
 
 const REMOTE_ONBOARDING_EVENTS = {
   STAGE_VIEWED: 'remote_onboarding_ui_stage_viewed',
@@ -75,14 +48,10 @@ export function OnboardingSignInPage() {
   const { config, loginStatus, loading, updateAndSaveConfig } = useUserSystem();
   const setSelectedOrgId = useOrganizationStore((s) => s.setSelectedOrgId);
 
-  const [showComparison, setShowComparison] = useState(false);
   const [saving, setSaving] = useState(false);
   const isCompletingOnboardingRef = useRef(false);
   const hasTrackedStageViewRef = useRef(false);
   const hasRedirectedToRootRef = useRef(false);
-  const [pendingProvider, setPendingProvider] = useState<OAuthProvider | null>(
-    null
-  );
 
   const trackRemoteOnboardingEvent = useCallback(
     (eventName: string, properties: Record<string, unknown> = {}) => {
@@ -189,30 +158,6 @@ export function OnboardingSignInPage() {
     }
   };
 
-  const handleProviderSignIn = async (provider: OAuthProvider) => {
-    if (saving || pendingProvider) return;
-
-    trackRemoteOnboardingEvent(REMOTE_ONBOARDING_EVENTS.PROVIDER_CLICKED, {
-      stage: 'sign_in',
-      provider,
-    });
-
-    setPendingProvider(provider);
-    const profile = await OAuthDialog.show({ initialProvider: provider });
-    setPendingProvider(null);
-
-    trackRemoteOnboardingEvent(REMOTE_ONBOARDING_EVENTS.PROVIDER_RESULT, {
-      stage: 'sign_in',
-      provider,
-      result: profile ? 'success' : 'cancelled',
-    });
-
-    if (profile) {
-      await finishOnboarding({
-        method: provider === 'github' ? 'oauth_github' : 'oauth_google',
-      });
-    }
-  };
 
   if (loading || !config) {
     return (
@@ -240,6 +185,7 @@ export function OnboardingSignInPage() {
       <div className="mx-auto flex min-h-full w-full max-w-3xl flex-col justify-center px-base py-double">
         <div className="rounded-sm border border-border bg-secondary p-double space-y-double">
           <header className="space-y-double text-center">
+            {/* Logo hidden until branding assets are ready
             <div className="flex justify-center">
               <img
                 src={logoSrc}
@@ -247,6 +193,8 @@ export function OnboardingSignInPage() {
                 className="h-8 w-auto logo"
               />
             </div>
+            */}
+            <h1 className="text-lg font-semibold text-normal">Kanban Crew</h1>
             {!isLoggedIn && (
               <p className="text-sm text-low">
                 {t('onboardingSignIn.subtitle')}
@@ -274,139 +222,35 @@ export function OnboardingSignInPage() {
             </section>
           ) : (
             <>
-              <section className="flex flex-col items-center gap-2">
-                <OAuthSignInButton
-                  provider="github"
-                  onClick={() => void handleProviderSignIn('github')}
-                  disabled={saving || pendingProvider !== null}
-                  loading={pendingProvider === 'github'}
-                  loadingText="Opening GitHub..."
-                />
-                <OAuthSignInButton
-                  provider="google"
-                  onClick={() => void handleProviderSignIn('google')}
-                  disabled={saving || pendingProvider !== null}
-                  loading={pendingProvider === 'google'}
-                  loadingText="Opening Google..."
-                />
-              </section>
-
-              <div className="flex justify-center">
-                <button
-                  type="button"
-                  className="text-sm text-low hover:text-normal underline underline-offset-2"
-                  onClick={() => {
-                    if (!showComparison) {
-                      trackRemoteOnboardingEvent(
-                        REMOTE_ONBOARDING_EVENTS.MORE_OPTIONS_OPENED,
-                        {
-                          stage: 'sign_in',
-                        }
-                      );
-                    }
-                    setShowComparison(true);
-                  }}
-                  disabled={saving || pendingProvider !== null}
-                >
-                  {t('onboardingSignIn.moreOptions')}
-                </button>
-              </div>
-            </>
-          )}
-
-          {showComparison && !isLoggedIn && (
-            <section className="space-y-base rounded-sm border border-border bg-panel p-base">
-              <div className="overflow-x-auto rounded-sm border border-border">
-                <table className="w-full border-collapse">
-                  <thead className="bg-secondary text-xs font-medium text-low">
-                    <tr>
-                      <th className="px-base py-half text-left">
-                        {t('onboardingSignIn.featureHeader')}
-                      </th>
-                      <th className="px-base py-half text-left border-l border-border">
-                        {t('onboardingSignIn.signedInHeader')}
-                      </th>
-                      <th className="px-base py-half text-left border-l border-border">
-                        {t('onboardingSignIn.skipSignInHeader')}
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody className="text-sm">
-                    {COMPARISON_ROWS.map((row, index) => (
-                      <tr
-                        key={row.feature}
-                        className={index > 0 ? 'border-t border-border' : ''}
-                      >
-                        <td className="px-base py-half text-normal align-top">
-                          {row.feature}
-                        </td>
-                        <td className="px-base py-half align-top border-l border-border text-center">
-                          {row.signedIn ? (
-                            <>
-                              <CheckIcon
-                                className="size-icon-xs text-success inline"
-                                weight="bold"
-                              />
-                              <span className="sr-only">
-                                {t('onboardingSignIn.yes')}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <XIcon
-                                className="size-icon-xs text-warning inline"
-                                weight="bold"
-                              />
-                              <span className="sr-only">
-                                {t('onboardingSignIn.no')}
-                              </span>
-                            </>
-                          )}
-                        </td>
-                        <td className="px-base py-half align-top border-l border-border text-center">
-                          {row.skip ? (
-                            <>
-                              <CheckIcon
-                                className="size-icon-xs text-success inline"
-                                weight="bold"
-                              />
-                              <span className="sr-only">
-                                {t('onboardingSignIn.yes')}
-                              </span>
-                            </>
-                          ) : (
-                            <>
-                              <XIcon
-                                className="size-icon-xs text-warning inline"
-                                weight="bold"
-                              />
-                              <span className="sr-only">
-                                {t('onboardingSignIn.no')}
-                              </span>
-                            </>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <div className="flex justify-end">
+              <section className="flex flex-col items-center gap-3">
                 <PrimaryButton
-                  value={
-                    saving
-                      ? 'Continuing...'
-                      : 'I understand, continue without signing in'
-                  }
-                  variant="tertiary"
+                  value={saving ? 'Continuing...' : 'Continue without signing in'}
                   onClick={() =>
                     void finishOnboarding({ method: 'skip_sign_in' })
                   }
-                  disabled={saving || pendingProvider !== null}
+                  disabled={saving}
                 />
-              </div>
-            </section>
+
+                <div className="flex items-center gap-3 w-full max-w-xs">
+                  <div className="h-px flex-1 bg-border" />
+                  <span className="text-xs text-low">or sign in</span>
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+
+                <OAuthSignInButton
+                  provider="github"
+                  onClick={() => toast.info('Sign in with GitHub is coming soon.')}
+                  disabled={saving}
+                />
+                <OAuthSignInButton
+                  provider="google"
+                  onClick={() => toast.info('Sign in with Google is coming soon.')}
+                  disabled={saving}
+                />
+              </section>
+            </>
           )}
+
         </div>
       </div>
     </div>

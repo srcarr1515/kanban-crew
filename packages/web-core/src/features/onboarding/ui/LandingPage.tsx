@@ -337,7 +337,8 @@ export function LandingPage() {
         {/* Header */}
         <header className="shrink-0 space-y-base p-double pb-base">
           <div className="flex items-center justify-between">
-            <img src={logoSrc} alt="Kanban Crew" className="h-8 w-auto logo" />
+            {/* Logo hidden until branding assets are ready */}
+            <span className="text-lg font-semibold text-normal">Kanban Crew</span>
             <div className="flex flex-wrap items-center gap-2">
               {SOCIAL_LINKS.map((link) => (
                 <PrimaryButton

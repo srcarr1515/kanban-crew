@@ -205,10 +205,11 @@ export function GeneralSettingsSection() {
 
   const resetOnboarding = async () => {
     if (!config) return;
-    updateAndSaveConfig({
+    await updateAndSaveConfig({
       onboarding_acknowledged: false,
       remote_onboarding_acknowledged: false,
     });
+    window.location.href = '/';
   };
 
   if (loading) {
