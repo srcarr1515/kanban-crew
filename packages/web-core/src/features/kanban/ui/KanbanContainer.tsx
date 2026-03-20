@@ -76,7 +76,6 @@ import { linkWorkspaceToTask, listTaskComments } from '@/shared/lib/local/localA
 import type { BaseCodingAgent } from 'shared/types';
 import { MergeOnDoneDialog } from '@/shared/dialogs/kanban/MergeOnDoneDialog';
 import { ResumeWorkDialog } from '@/shared/dialogs/kanban/ResumeWorkDialog';
-import { SubTaskWorkspaceDialog } from '@/shared/dialogs/kanban/SubTaskWorkspaceDialog';
 import { createLocalTask, listLocalProjects, updateLocalProject } from '@/shared/lib/local/localApi';
 import { ConfirmDialog } from '@/shared/dialogs/shared/ConfirmDialog';
 import { toast } from 'sonner';

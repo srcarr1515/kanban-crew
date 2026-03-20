@@ -30,7 +30,7 @@ import {
   type ModifyProposal,
   type DeleteProposal,
 } from '@/shared/lib/local/chatApi';
-import { listCrewMembers, listLocalTasks } from '@/shared/lib/local/localApi';
+import { listCrewMembers } from '@/shared/lib/local/localApi';
 import {
   ChatToolbar,
   type ChatToolbarCrewMemberProps,
@@ -45,7 +45,7 @@ import { useChatStore } from './useChatStore';
 export function ChatPanel() {
   const { projectId } = useProjectContext();
   const queryClient = useQueryClient();
-  const { activeThreadId, setActiveThread, close, isFullscreen, toggleFullscreen, attachedTickets, attachTicket, detachTicket, clearAttachedTickets, draggingIssueId, setDraggingIssueId, setChatPanelRef } = useChatStore();
+  const { activeThreadId, setActiveThread, close, isFullscreen, toggleFullscreen, attachedTickets, detachTicket, clearAttachedTickets, draggingIssueId, setChatPanelRef } = useChatStore();
   const [input, setInput] = useState('');
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -76,12 +76,6 @@ export function ChatPanel() {
     staleTime: 30_000,
   });
 
-  // ── Local tasks (for ticket drag-to-chat lookup) ────────────────
-  const { data: localTasks = [] } = useQuery({
-    queryKey: ['local', 'tasks', projectId],
-    queryFn: () => listLocalTasks(projectId),
-    staleTime: 10_000,
-  });
 
   // ── Threads ──────────────────────────────────────────────────────
   const { data: threads = [], isPending: isThreadsPending } = useQuery({
