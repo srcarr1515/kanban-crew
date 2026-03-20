@@ -210,7 +210,7 @@ fn get_system_prompt() -> String {
 
     #[cfg(not(debug_assertions))]
     {
-        include_str!("../../prompts/chat_system.md").to_string()
+        include_str!("../../../prompts/chat_system.md").to_string()
     }
 }
 
