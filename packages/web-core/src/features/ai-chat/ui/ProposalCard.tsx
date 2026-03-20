@@ -5,6 +5,7 @@ import { createLocalTask } from '@/shared/lib/local/localApi';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useQueryClient } from '@tanstack/react-query';
 import { EditProposalDialog } from './EditProposalDialog';
+import { SubTask } from './SubTask';
 
 interface ProposalCardProps {
   proposal: Proposal;
@@ -82,10 +83,7 @@ export function ProposalCard({ proposal, crewMemberId }: ProposalCardProps) {
             {ticket.subtasks && ticket.subtasks.length > 0 && (
               <ul className="ml-6 mt-1 space-y-0.5">
                 {ticket.subtasks.map((sub, j) => (
-                  <li key={j} className="flex gap-1.5 text-xs text-low">
-                    <span className="shrink-0">↳</span>
-                    <span>{sub.title}</span>
-                  </li>
+                  <SubTask key={j} subtask={sub} />
                 ))}
               </ul>
             )}
