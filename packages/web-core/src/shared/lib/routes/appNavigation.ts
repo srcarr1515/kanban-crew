@@ -32,7 +32,8 @@ export type AppDestination =
       projectId: string;
       draftId: string;
       hostId?: string;
-    };
+    }
+  | { kind: 'scheduled-jobs' };
 
 export type NavigationTransition = {
   replace?: boolean;
@@ -74,6 +75,7 @@ export interface AppNavigation {
     draftId: string,
     transition?: NavigationTransition
   ): void;
+  goToScheduledJobs(transition?: NavigationTransition): void;
 }
 
 type ProjectDestinationKind =
@@ -163,6 +165,12 @@ export function isWorkspacesDestination(
     default:
       return false;
   }
+}
+
+export function isScheduledJobsDestination(
+  destination: AppDestination | null
+): boolean {
+  return destination?.kind === 'scheduled-jobs';
 }
 
 export function getProjectDestination(

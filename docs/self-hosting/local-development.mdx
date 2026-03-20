@@ -197,6 +197,10 @@ To stop and remove all data (fresh start):
 docker compose down -v
 ```
 
+## Background workers
+
+When running locally, the server automatically starts background workers for the [job scheduler](/core-features/scheduled-jobs) and PR monitor. These poll every 60 seconds and use minimal resources. No additional configuration is needed for local development.
+
 ## Troubleshooting
 
 <AccordionGroup>

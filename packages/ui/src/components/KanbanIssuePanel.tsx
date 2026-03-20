@@ -17,6 +17,9 @@ import {
   ImageIcon,
   EyeIcon,
   PencilSimpleIcon,
+  CaretDownIcon,
+  CaretUpIcon,
+  ClockIcon,
 } from '@phosphor-icons/react';
 import {
   IssueTagsRow,
@@ -59,6 +62,22 @@ export interface IssueFormData {
   assigneeIds: string[];
   tagIds: string[];
   createDraftWorkspace: boolean;
+}
+
+export type IntervalUnit = 'minutes' | 'hours' | 'daily' | 'weekly';
+export type ScheduleMode = 'simple' | 'cron';
+
+export interface ScheduleConfig {
+  saveAsTemplate: boolean;
+  scheduleMode: ScheduleMode;
+  intervalUnit: IntervalUnit;
+  intervalEvery: number;
+  intervalHour: number;
+  intervalMinute: number;
+  intervalDayOfWeek: number;
+  cronExpression: string;
+  targetColumnId: string;
+  enabled: boolean;
 }
 
 export interface LinkedPullRequest extends IssueTagsLinkedPullRequest {}
@@ -147,12 +166,21 @@ export interface KanbanIssuePanelProps {
   attachmentError?: string | null;
   onDismissAttachmentError?: () => void;
 
+  // Schedule template (create mode only)
+  scheduleConfig?: ScheduleConfig;
+  onScheduleConfigChange?: <K extends keyof ScheduleConfig>(
+    field: K,
+    value: ScheduleConfig[K]
+  ) => void;
+  targetColumnStatuses?: { id: string; name: string }[];
+
   // Edit-mode section renderers
   renderWorkspacesSection?: (issueId: string) => ReactNode;
   renderRelationshipsSection?: (issueId: string) => ReactNode;
   renderSubIssuesSection?: (issueId: string) => ReactNode;
   renderCommentsSection?: (issueId: string) => ReactNode;
   renderArtifactsSection?: (issueId: string) => ReactNode;
+  renderHistorySection?: (issueId: string) => ReactNode;
 }
 
 export function KanbanIssuePanel({
@@ -187,16 +215,21 @@ export function KanbanIssuePanel({
   isUploading,
   attachmentError,
   onDismissAttachmentError,
+  scheduleConfig,
+  onScheduleConfigChange,
+  targetColumnStatuses,
   renderWorkspacesSection,
   renderRelationshipsSection,
   renderSubIssuesSection,
   renderCommentsSection,
   renderArtifactsSection,
+  renderHistorySection,
 }: KanbanIssuePanelProps) {
   const { t } = useTranslation('common');
   const isCreateMode = mode === 'create';
   const breadcrumbTextClass =
     'min-w-0 text-sm text-normal truncate rounded-sm px-1 py-0.5 hover:bg-panel hover:text-high transition-colors';
+  const [scheduleAccordionOpen, setScheduleAccordionOpen] = useState(false);
   const creatorName =
     creatorUser?.first_name?.trim() || creatorUser?.username?.trim() || null;
   const showCreator = !isCreateMode && Boolean(creatorName);
@@ -536,11 +569,186 @@ export function KanbanIssuePanel({
           </div>
         )}
 
+        {/* Save as Template checkbox (Create mode only) */}
+        {isCreateMode && scheduleConfig && onScheduleConfigChange && (
+          <div className="px-base py-base border-t">
+            <Toggle
+              checked={scheduleConfig.saveAsTemplate}
+              onCheckedChange={(checked) => {
+                onScheduleConfigChange('saveAsTemplate', checked);
+                if (checked) setScheduleAccordionOpen(true);
+              }}
+              label="Save as scheduled template"
+              description="Create a scheduled job that spawns copies of this task on a recurring schedule"
+              disabled={isSubmitting}
+            />
+
+            {/* Schedule settings accordion */}
+            {scheduleConfig.saveAsTemplate && (
+              <div className="mt-base">
+                <button
+                  type="button"
+                  className="flex items-center gap-half text-sm text-normal hover:text-high transition-colors w-full"
+                  onClick={() => setScheduleAccordionOpen((v) => !v)}
+                >
+                  <ClockIcon className="size-icon-sm" />
+                  <span className="font-medium">Schedule Settings</span>
+                  {scheduleAccordionOpen ? (
+                    <CaretUpIcon className="size-icon-sm ml-auto" />
+                  ) : (
+                    <CaretDownIcon className="size-icon-sm ml-auto" />
+                  )}
+                </button>
+
+                {scheduleAccordionOpen && (
+                  <div className="mt-base space-y-3 pl-half">
+                    {/* Schedule mode toggle */}
+                    <div className="space-y-1">
+                      <span className="text-xs text-low font-medium">Schedule</span>
+                      <div className="flex gap-1 p-0.5 bg-secondary rounded w-fit">
+                        <button
+                          type="button"
+                          className={cn(
+                            'px-3 py-1 text-xs rounded transition-colors',
+                            scheduleConfig.scheduleMode === 'simple'
+                              ? 'bg-primary text-high shadow-sm'
+                              : 'text-low hover:text-normal'
+                          )}
+                          onClick={() => onScheduleConfigChange('scheduleMode', 'simple')}
+                        >
+                          Simple interval
+                        </button>
+                        <button
+                          type="button"
+                          className={cn(
+                            'px-3 py-1 text-xs rounded transition-colors',
+                            scheduleConfig.scheduleMode === 'cron'
+                              ? 'bg-primary text-high shadow-sm'
+                              : 'text-low hover:text-normal'
+                          )}
+                          onClick={() => onScheduleConfigChange('scheduleMode', 'cron')}
+                        >
+                          Cron expression
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Simple interval builder */}
+                    {scheduleConfig.scheduleMode === 'simple' ? (
+                      <div className="flex flex-wrap items-center gap-2 text-sm">
+                        <span className="text-normal">Every</span>
+                        {(scheduleConfig.intervalUnit === 'minutes' || scheduleConfig.intervalUnit === 'hours') && (
+                          <input
+                            type="number"
+                            className="w-14 h-7 px-2 text-sm text-center bg-primary border rounded"
+                            min={1}
+                            max={scheduleConfig.intervalUnit === 'minutes' ? 59 : 23}
+                            value={scheduleConfig.intervalEvery}
+                            onChange={(e) => onScheduleConfigChange('intervalEvery', Math.max(1, parseInt(e.target.value, 10) || 1))}
+                          />
+                        )}
+                        <select
+                          className="h-7 px-2 text-sm bg-primary border rounded"
+                          value={scheduleConfig.intervalUnit}
+                          onChange={(e) => onScheduleConfigChange('intervalUnit', e.target.value as IntervalUnit)}
+                        >
+                          <option value="minutes">minute(s)</option>
+                          <option value="hours">hour(s)</option>
+                          <option value="daily">day</option>
+                          <option value="weekly">week</option>
+                        </select>
+                        {scheduleConfig.intervalUnit === 'weekly' && (
+                          <>
+                            <span className="text-normal">on</span>
+                            <select
+                              className="h-7 px-2 text-sm bg-primary border rounded"
+                              value={scheduleConfig.intervalDayOfWeek}
+                              onChange={(e) => onScheduleConfigChange('intervalDayOfWeek', parseInt(e.target.value, 10))}
+                            >
+                              <option value={1}>Monday</option>
+                              <option value={2}>Tuesday</option>
+                              <option value={3}>Wednesday</option>
+                              <option value={4}>Thursday</option>
+                              <option value={5}>Friday</option>
+                              <option value={6}>Saturday</option>
+                              <option value={0}>Sunday</option>
+                            </select>
+                          </>
+                        )}
+                        {(scheduleConfig.intervalUnit === 'daily' || scheduleConfig.intervalUnit === 'weekly') && (
+                          <>
+                            <span className="text-normal">at</span>
+                            <select
+                              className="h-7 px-2 text-sm bg-primary border rounded"
+                              value={scheduleConfig.intervalHour}
+                              onChange={(e) => onScheduleConfigChange('intervalHour', parseInt(e.target.value, 10))}
+                            >
+                              {Array.from({ length: 24 }, (_, i) => (
+                                <option key={i} value={i}>
+                                  {i === 0 ? '12 AM' : i < 12 ? `${i} AM` : i === 12 ? '12 PM' : `${i - 12} PM`}
+                                </option>
+                              ))}
+                            </select>
+                            <span className="text-normal">:</span>
+                            <select
+                              className="h-7 px-2 text-sm bg-primary border rounded"
+                              value={scheduleConfig.intervalMinute}
+                              onChange={(e) => onScheduleConfigChange('intervalMinute', parseInt(e.target.value, 10))}
+                            >
+                              {[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55].map((m) => (
+                                <option key={m} value={m}>{String(m).padStart(2, '0')}</option>
+                              ))}
+                            </select>
+                          </>
+                        )}
+                      </div>
+                    ) : (
+                      <div className="space-y-1">
+                        <input
+                          type="text"
+                          className="w-full h-7 px-2 text-sm font-mono bg-primary border rounded"
+                          placeholder="0 9 * * *"
+                          value={scheduleConfig.cronExpression}
+                          onChange={(e) => onScheduleConfigChange('cronExpression', e.target.value)}
+                        />
+                        <p className="text-xs text-low">
+                          Format: minute hour day-of-month month day-of-week
+                        </p>
+                      </div>
+                    )}
+
+                    {/* Target column */}
+                    {targetColumnStatuses && targetColumnStatuses.length > 0 && (
+                      <div className="space-y-1">
+                        <span className="text-xs text-low font-medium">Target Column</span>
+                        <select
+                          className="h-7 px-2 text-sm bg-primary border rounded w-full"
+                          value={scheduleConfig.targetColumnId}
+                          onChange={(e) => onScheduleConfigChange('targetColumnId', e.target.value)}
+                        >
+                          {targetColumnStatuses.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                        </select>
+                        <p className="text-xs text-low">Column where spawned tasks will be placed</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* Create Issue Button (Create mode only) */}
         {isCreateMode && (
           <div className="px-base pb-base flex items-center gap-half">
             <PrimaryButton
-              value={t('kanban.createIssue')}
+              value={
+                scheduleConfig?.saveAsTemplate
+                  ? t('kanban.createIssue') + ' & Schedule'
+                  : t('kanban.createIssue')
+              }
               onClick={onSubmit}
               disabled={isSubmitting || !formData.title.trim()}
               actionIcon={isSubmitting ? 'spinner' : undefined}
@@ -582,6 +790,11 @@ export function KanbanIssuePanel({
         {/* Artifacts Section (Edit mode only) */}
         {!isCreateMode && issueId && renderArtifactsSection && (
           <div className="border-t">{renderArtifactsSection(issueId)}</div>
+        )}
+
+        {/* History Section (Edit mode only, shown for template tasks) */}
+        {!isCreateMode && issueId && renderHistorySection && (
+          <div className="border-t">{renderHistorySection(issueId)}</div>
         )}
       </div>
     </div>

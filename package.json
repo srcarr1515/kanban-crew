@@ -51,13 +51,17 @@
     "tauri:build": "cd crates/tauri-app && cargo tauri build",
     "db:reset": "rm -f dev_assets/db.sqlite dev_assets/db.v2.sqlite",
     "dev:stop": "node scripts/dev-stop.js",
-    "dev:stop:backend": "node scripts/dev-stop.js backend"
+    "dev:stop:backend": "node scripts/dev-stop.js backend",
+    "cypress:open": "cypress open",
+    "cypress:run": "cypress run",
+    "test:e2e": "cypress run --spec 'cypress/e2e/**/*.cy.ts'"
   },
   "devDependencies": {
     "@types/adm-zip": "^0.5.7",
     "@types/node": "^20.0.0",
     "bippy": "0.5.28",
     "concurrently": "^8.2.2",
+    "cypress": "^15.12.0",
     "esbuild": "^0.27.2",
     "jwt-decode": "^4.0.0",
     "typescript": "^5.7.0",

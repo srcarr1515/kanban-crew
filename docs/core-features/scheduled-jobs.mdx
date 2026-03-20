@@ -1,0 +1,161 @@
+---
+title: "Scheduling Recurring Tasks"
+description: "Create template tasks that automatically spawn new copies on a cron schedule, and track their execution history"
+---
+
+Scheduled jobs let you define a task once and have Kanban Crew automatically create fresh copies of it on a recurring schedule. This is useful for repetitive work such as nightly builds, weekly dependency updates, or any task you run on a regular cadence.
+
+## How it works
+
+A scheduled job connects two things:
+
+| Concept | Description |
+|---------|-------------|
+| **Template task** | An existing task on your kanban board that acts as a blueprint |
+| **Cron schedule** | A recurring time expression that controls when new copies are spawned |
+
+When the schedule fires, the background worker clones the template task into a new "To do" task. The original template stays untouched so it can be reused indefinitely.
+
+## Create a scheduled job
+
+There are two ways to set up a scheduled job: from the task creation flyout or from the dedicated Scheduled Jobs page.
+
+### Option A: During task creation
+
+<Steps>
+<Step title="Open the task creation flyout">
+  Click the **+** button on any column header or press **c** to open the new task form.
+</Step>
+
+<Step title="Enable the schedule toggle">
+  Tick **Save as scheduled template** at the bottom of the flyout. A schedule settings panel appears.
+</Step>
+
+<Step title="Choose a schedule mode">
+  Pick **Simple interval** for common patterns (every N hours, daily, weekly) or **Cron expression** if you need full control over the schedule.
+
+  <Tip>
+  The simple interval mode covers the most common cases. Use cron expressions for advanced patterns like "every weekday at 09:00" (`0 9 * * 1-5`).
+  </Tip>
+</Step>
+
+<Step title="Save the task">
+  Click **Create Task** or **Create & Start**. Kanban Crew creates the template task and its associated scheduled job in one step.
+</Step>
+</Steps>
+
+### Option B: From the Scheduled Jobs page
+
+<Steps>
+<Step title="Open the Scheduled Jobs page">
+  Click **Scheduled Jobs** in the sidebar navigation.
+</Step>
+
+<Step title="Click Schedule Job">
+  Click the **Schedule Job** button in the top right corner.
+</Step>
+
+<Step title="Select a template task">
+  Choose an existing task from the dropdown. This task becomes the blueprint for all future copies.
+</Step>
+
+<Step title="Configure the cron schedule">
+  Use the cron builder to define when copies should be created. The builder offers presets for common intervals and validates your expression as you type.
+</Step>
+
+<Step title="Save">
+  Click **Save** to create the scheduled job. It starts enabled by default.
+</Step>
+</Steps>
+
+## Manage scheduled jobs
+
+The **Scheduled Jobs** page lists all your jobs with their template task, schedule, and enabled/disabled status.
+
+| Action | How |
+|--------|-----|
+| **Enable or disable** | Toggle the switch next to the job. Disabled jobs keep their configuration but stop spawning new tasks. |
+| **Edit the schedule** | Click the edit icon to update the cron expression. |
+| **Trigger manually** | Click **Run Now** to immediately spawn a task without waiting for the next scheduled time. |
+| **Delete** | Click the delete icon. You are asked to confirm before the job is removed. The template task is not deleted. |
+
+<Note>
+Deleting a scheduled job does not delete the template task or any previously spawned tasks — only the schedule itself is removed.
+</Note>
+
+## View execution history
+
+Every time a scheduled job fires, it creates a **job run** record. You can view run history in two places:
+
+- **Scheduled Jobs page** — expand a job row to see its recent runs with status, start time, and finish time.
+- **Task detail panel** — template tasks display a **History** section showing all runs that were spawned from that template.
+
+Each run has one of these statuses:
+
+| Status | Meaning |
+|--------|---------|
+| **Pending** | The run was created and is waiting to start |
+| **Running** | A task has been spawned and is in progress |
+| **Success** | The spawned task reached the "Done" column |
+| **Failed** | The spawned task was cancelled or the template was not found |
+
+## Understanding cron expressions
+
+A cron expression is a string of five fields that define a time pattern:
+
+```
+┌───────────── minute (0–59)
+│ ┌─────────── hour (0–23)
+│ │ ┌───────── day of month (1–31)
+│ │ │ ┌─────── month (1–12)
+│ │ │ │ ┌───── day of week (0–6, Sun=0)
+│ │ │ │ │
+* * * * *
+```
+
+Common examples:
+
+| Expression | Schedule |
+|-----------|----------|
+| `0 9 * * *` | Every day at 09:00 |
+| `0 9 * * 1-5` | Every weekday at 09:00 |
+| `*/30 * * * *` | Every 30 minutes |
+| `0 0 1 * *` | First day of every month at midnight |
+| `0 18 * * 5` | Every Friday at 18:00 |
+
+<Info>
+All times are evaluated in UTC. The cron builder in the UI shows a human-readable description of your expression so you can verify it before saving.
+</Info>
+
+## Troubleshooting
+
+<AccordionGroup>
+<Accordion title="Job is enabled but tasks are not being created">
+- Verify the cron expression is valid — the cron builder highlights invalid expressions in red
+- Check that the template task still exists on the board. If it was deleted, runs will fail with a "template task not found" error.
+- The background worker polls every 60 seconds. If the schedule fires between polls, it is picked up on the next tick.
+</Accordion>
+
+<Accordion title="A run shows Failed status">
+Open the run details to see the error message. Common causes:
+- **Template task not found** — the template was deleted after the job was created. Create a new job with a valid template.
+- **Spawned task was deleted** — someone deleted the spawned task before it reached "Done". The run is marked as failed.
+- **Task cancelled** — the spawned task was moved to the "Cancelled" column.
+</Accordion>
+
+<Accordion title="I want to change the template task">
+You cannot change the template on an existing job. Delete the current job and create a new one pointing to the desired template task.
+</Accordion>
+</AccordionGroup>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Creating Tasks" icon="plus" href="/core-features/creating-tasks">
+    Learn more about creating tasks that can serve as templates
+  </Card>
+
+  <Card title="Issue Management" icon="kanban" href="/issue-management">
+    Understand the full task lifecycle on the kanban board
+  </Card>
+</CardGroup>

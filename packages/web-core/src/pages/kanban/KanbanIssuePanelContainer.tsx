@@ -23,11 +23,15 @@ import { IssueWorkspacesSectionContainer } from './IssueWorkspacesSectionContain
 import { LocalIssueWorkspacesSectionContainer } from './LocalIssueWorkspacesSectionContainer';
 import { LocalIssueCommentsSectionContainer } from './LocalIssueCommentsSectionContainer';
 import { LocalArtifactsSectionContainer } from './LocalArtifactsSectionContainer';
+import { IssueHistorySectionContainer } from './IssueHistorySectionContainer';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import {
   KanbanIssuePanel,
   type IssueFormData,
+  type ScheduleConfig,
 } from '@vibe/ui/components/KanbanIssuePanel';
+import { jobsApi } from '@/shared/lib/api';
+import { LOCAL_STATUSES } from '@/shared/lib/local/localStatuses';
 import { useActions } from '@/shared/hooks/useActions';
 import { useUserContext } from '@/shared/hooks/useUserContext';
 import { useWorkspaceContext } from '@/shared/hooks/useWorkspaceContext';
@@ -62,6 +66,20 @@ import {
   useKanbanIssueComposer,
   useKanbanIssueComposerStore,
 } from '@/shared/stores/useKanbanIssueComposerStore';
+
+function computeCronFromConfig(config: ScheduleConfig): string {
+  if (config.scheduleMode === 'cron') return config.cronExpression.trim();
+  switch (config.intervalUnit) {
+    case 'minutes':
+      return `*/${config.intervalEvery} * * * *`;
+    case 'hours':
+      return `0 */${config.intervalEvery} * * *`;
+    case 'daily':
+      return `${config.intervalMinute} ${config.intervalHour} * * *`;
+    case 'weekly':
+      return `${config.intervalMinute} ${config.intervalHour} * * ${config.intervalDayOfWeek}`;
+  }
+}
 
 interface KanbanIssuePanelContainerProps {
   issueResolution: 'resolving' | 'ready' | 'missing' | null;
@@ -341,6 +359,36 @@ export function KanbanIssuePanelContainer({
   }, [displayData.assigneeIds, membersWithProfilesById]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Schedule template config (create mode only)
+  const defaultTargetColumn = sortedStatuses[0]?.id ?? LOCAL_STATUSES[0]?.id ?? 'todo';
+  const [scheduleConfig, setScheduleConfig] = useState<ScheduleConfig>({
+    saveAsTemplate: false,
+    scheduleMode: 'simple',
+    intervalUnit: 'daily',
+    intervalEvery: 1,
+    intervalHour: 9,
+    intervalMinute: 0,
+    intervalDayOfWeek: 1,
+    cronExpression: '0 9 * * *',
+    targetColumnId: defaultTargetColumn,
+    enabled: true,
+  });
+
+  const handleScheduleConfigChange = useCallback(
+    <K extends keyof ScheduleConfig>(field: K, value: ScheduleConfig[K]) => {
+      setScheduleConfig((prev) => ({ ...prev, [field]: value }));
+    },
+    []
+  );
+
+  const targetColumnStatuses = useMemo(
+    () =>
+      IS_LOCAL_MODE
+        ? LOCAL_STATUSES.map((s) => ({ id: s.id, name: s.name }))
+        : sortedStatuses.map((s) => ({ id: s.id, name: s.name })),
+    [sortedStatuses]
+  );
 
   // Save status for description (shown in WYSIWYG toolbar)
   const [descriptionSaveStatus, setDescriptionSaveStatus] = useState<
@@ -752,6 +800,16 @@ export function KanbanIssuePanelContainer({
           });
         }
 
+        // Create scheduled job if "Save as template" is checked
+        if (scheduleConfig.saveAsTemplate) {
+          const cronExpr = computeCronFromConfig(scheduleConfig);
+          await jobsApi.create({
+            template_task_id: syncedIssue.id,
+            schedule_cron: cronExpr,
+            enabled: scheduleConfig.enabled,
+          });
+        }
+
         if (issueComposerKey) {
           closeKanbanIssueComposer(issueComposerKey);
         }
@@ -824,6 +882,7 @@ export function KanbanIssuePanelContainer({
     getAttachmentIds,
     clearAttachments,
     onExpectIssueOpen,
+    scheduleConfig,
     t,
   ]);
 
@@ -926,6 +985,9 @@ export function KanbanIssuePanelContainer({
       )}
       renderDescriptionEditor={(props) => <WYSIWYGEditor {...props} />}
       isSubmitting={isSubmitting}
+      scheduleConfig={mode === 'create' ? scheduleConfig : undefined}
+      onScheduleConfigChange={mode === 'create' ? handleScheduleConfigChange : undefined}
+      targetColumnStatuses={mode === 'create' ? targetColumnStatuses : undefined}
       descriptionSaveStatus={
         mode === 'edit' ? descriptionSaveStatus : undefined
       }
@@ -966,6 +1028,9 @@ export function KanbanIssuePanelContainer({
           ? (issueId) => <LocalArtifactsSectionContainer issueId={issueId} />
           : undefined
       }
+      renderHistorySection={(issueId) => (
+        <IssueHistorySectionContainer issueId={issueId} />
+      )}
     />
   );
 }

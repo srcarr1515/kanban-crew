@@ -82,6 +82,8 @@ function resolveLocalDestinationFromPath(path: string): AppDestination | null {
           }
         : null;
     }
+    case '/_app/scheduled-jobs':
+      return { kind: 'scheduled-jobs' };
     case '/_app/projects/$projectId_/workspaces/create/$draftId': {
       const projectId = getPathParam(routeParams, 'projectId');
       const draftId = getPathParam(routeParams, 'draftId');
@@ -161,6 +163,8 @@ function destinationToLocalTarget(destination: AppDestination) {
           draftId: destination.draftId,
         },
       } as const;
+    case 'scheduled-jobs':
+      return { to: '/scheduled-jobs' } as const;
   }
 }
 
@@ -217,6 +221,8 @@ export function createLocalAppNavigation(): AppNavigation {
         { kind: 'project-workspace-create', projectId, draftId },
         transition
       ),
+    goToScheduledJobs: (transition) =>
+      navigateTo({ kind: 'scheduled-jobs' }, transition),
   };
 
   return navigation;

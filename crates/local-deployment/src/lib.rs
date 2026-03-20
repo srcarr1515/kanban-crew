@@ -18,6 +18,7 @@ use services::services::{
     file_search::FileSearchCache,
     filesystem::FilesystemService,
     image::ImageService,
+    job_scheduler::JobSchedulerService,
     oauth_credentials::OAuthCredentials,
     pr_monitor::PrMonitorService,
     queued_message::QueuedMessageService,
@@ -216,7 +217,8 @@ impl Deployment for LocalDeployment {
             });
             let container = container.clone();
             let rc = remote_client.clone().ok();
-            PrMonitorService::spawn(db, analytics, container, rc).await;
+            PrMonitorService::spawn(db.clone(), analytics, container, rc).await;
+            JobSchedulerService::spawn(db).await;
         }
 
         let deployment = Self {

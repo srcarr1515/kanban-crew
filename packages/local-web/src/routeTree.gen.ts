@@ -15,6 +15,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as OnboardingSignInRouteImport } from './routes/onboarding_.sign-in'
 import { Route as AppWorkspacesRouteImport } from './routes/_app.workspaces'
 import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
+import { Route as AppScheduledJobsRouteImport } from './routes/_app.scheduled-jobs'
 import { Route as AppMigrateRouteImport } from './routes/_app.migrate'
 import { Route as WorkspacesWorkspaceIdVscodeRouteImport } from './routes/workspaces.$workspaceId.vscode'
 import { Route as AppWorkspacesElectricTestRouteImport } from './routes/_app.workspaces_.electric-test'
@@ -53,6 +54,11 @@ const AppWorkspacesRoute = AppWorkspacesRouteImport.update({
 const AppNotificationsRoute = AppNotificationsRouteImport.update({
   id: '/notifications',
   path: '/notifications',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppScheduledJobsRoute = AppScheduledJobsRouteImport.update({
+  id: '/scheduled-jobs',
+  path: '/scheduled-jobs',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMigrateRoute = AppMigrateRouteImport.update({
@@ -118,6 +124,7 @@ export interface FileRoutesByFullPath {
   '/onboarding': typeof OnboardingRoute
   '/migrate': typeof AppMigrateRoute
   '/notifications': typeof AppNotificationsRoute
+  '/scheduled-jobs': typeof AppScheduledJobsRoute
   '/workspaces': typeof AppWorkspacesRoute
   '/onboarding/sign-in': typeof OnboardingSignInRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRoute
@@ -135,6 +142,7 @@ export interface FileRoutesByTo {
   '/onboarding': typeof OnboardingRoute
   '/migrate': typeof AppMigrateRoute
   '/notifications': typeof AppNotificationsRoute
+  '/scheduled-jobs': typeof AppScheduledJobsRoute
   '/workspaces': typeof AppWorkspacesRoute
   '/onboarding/sign-in': typeof OnboardingSignInRoute
   '/projects/$projectId': typeof AppProjectsProjectIdRoute
@@ -154,6 +162,7 @@ export interface FileRoutesById {
   '/onboarding': typeof OnboardingRoute
   '/_app/migrate': typeof AppMigrateRoute
   '/_app/notifications': typeof AppNotificationsRoute
+  '/_app/scheduled-jobs': typeof AppScheduledJobsRoute
   '/_app/workspaces': typeof AppWorkspacesRoute
   '/onboarding_/sign-in': typeof OnboardingSignInRoute
   '/_app/projects/$projectId': typeof AppProjectsProjectIdRoute
@@ -173,6 +182,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/migrate'
     | '/notifications'
+    | '/scheduled-jobs'
     | '/workspaces'
     | '/onboarding/sign-in'
     | '/projects/$projectId'
@@ -190,6 +200,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/migrate'
     | '/notifications'
+    | '/scheduled-jobs'
     | '/workspaces'
     | '/onboarding/sign-in'
     | '/projects/$projectId'
@@ -208,6 +219,7 @@ export interface FileRouteTypes {
     | '/onboarding'
     | '/_app/migrate'
     | '/_app/notifications'
+    | '/_app/scheduled-jobs'
     | '/_app/workspaces'
     | '/onboarding_/sign-in'
     | '/_app/projects/$projectId'
@@ -271,6 +283,13 @@ declare module '@tanstack/react-router' {
       path: '/notifications'
       fullPath: '/notifications'
       preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/scheduled-jobs': {
+      id: '/_app/scheduled-jobs'
+      path: '/scheduled-jobs'
+      fullPath: '/scheduled-jobs'
+      preLoaderRoute: typeof AppScheduledJobsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/migrate': {
@@ -349,6 +368,7 @@ declare module '@tanstack/react-router' {
 interface AppRouteChildren {
   AppMigrateRoute: typeof AppMigrateRoute
   AppNotificationsRoute: typeof AppNotificationsRoute
+  AppScheduledJobsRoute: typeof AppScheduledJobsRoute
   AppWorkspacesRoute: typeof AppWorkspacesRoute
   AppProjectsProjectIdRoute: typeof AppProjectsProjectIdRoute
   AppWorkspacesWorkspaceIdRoute: typeof AppWorkspacesWorkspaceIdRoute
@@ -363,6 +383,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppMigrateRoute: AppMigrateRoute,
   AppNotificationsRoute: AppNotificationsRoute,
+  AppScheduledJobsRoute: AppScheduledJobsRoute,
   AppWorkspacesRoute: AppWorkspacesRoute,
   AppProjectsProjectIdRoute: AppProjectsProjectIdRoute,
   AppWorkspacesWorkspaceIdRoute: AppWorkspacesWorkspaceIdRoute,

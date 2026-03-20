@@ -297,6 +297,38 @@ docker compose -f docker-compose.prod.yml logs -f remote-server
 docker compose -f docker-compose.prod.yml ps
 ```
 
+## Background workers
+
+The Kanban Crew server runs several background workers inside the main process. These start automatically — no separate service is required.
+
+### Job scheduler
+
+The **job scheduler** evaluates cron schedules for [scheduled jobs](/core-features/scheduled-jobs) and spawns new tasks from templates. Key characteristics:
+
+| Property | Value |
+|----------|-------|
+| **Poll interval** | 60 seconds |
+| **Resource usage** | Minimal — one lightweight SQLite query per tick to fetch enabled jobs |
+| **Failure handling** | Errors are logged and the scheduler continues on the next tick |
+
+The scheduler runs a single pass on each tick:
+1. Fetches all enabled jobs from the database
+2. Evaluates each job's cron expression against the current time
+3. Clones the template task if the schedule fires within the poll window
+4. Checks running job runs and updates their status based on spawned task progress
+
+<Note>
+Because the poll interval is 60 seconds, the effective minimum schedule granularity is one minute. Cron expressions that fire more frequently than once per minute are evaluated at most once per tick.
+</Note>
+
+### PR monitor
+
+The **PR monitor** polls GitHub for pull request status changes and updates task columns accordingly. It runs on a similar 60-second interval.
+
+<Info>
+Both background workers share the same SQLite connection pool as the API server. On resource-constrained hosts (2 GB RAM), this is well within normal operating parameters and does not require additional tuning.
+</Info>
+
 ## Troubleshooting
 
 <AccordionGroup>

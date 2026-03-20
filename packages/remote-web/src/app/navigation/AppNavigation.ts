@@ -207,6 +207,8 @@ function destinationToRemoteTarget(
           draftId: destination.draftId,
         },
       } as const;
+    case "scheduled-jobs":
+      return { to: "/" } as const;
   }
 }
 
@@ -277,6 +279,8 @@ export function createRemoteHostAppNavigation(hostId: string): AppNavigation {
         { kind: "project-workspace-create", hostId, projectId, draftId },
         transition,
       ),
+    goToScheduledJobs: (transition) =>
+      navigateTo({ kind: "scheduled-jobs" }, transition),
   };
 
   return navigation;
@@ -337,6 +341,8 @@ function createRemoteFallbackAppNavigation(): AppNavigation {
         { kind: "project-workspace-create", projectId, draftId },
         transition,
       ),
+    goToScheduledJobs: (transition) =>
+      navigateTo({ kind: "scheduled-jobs" }, transition),
   };
 
   return navigation;

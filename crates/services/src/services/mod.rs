@@ -12,6 +12,7 @@ pub mod file_search;
 pub mod filesystem;
 pub mod filesystem_watcher;
 pub mod image;
+pub mod job_scheduler;
 pub mod migration;
 pub mod notification;
 pub mod oauth_credentials;

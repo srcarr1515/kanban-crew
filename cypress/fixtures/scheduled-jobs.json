@@ -1,0 +1,68 @@
+{
+  "project": {
+    "id": "proj-e2e-001",
+    "name": "E2E Test Project"
+  },
+  "templateTask": {
+    "id": "task-e2e-template-001",
+    "project_id": "proj-e2e-001",
+    "title": "Template: Deploy notification service",
+    "description": "Template task for automated deployments",
+    "status": "todo",
+    "simple_id": "PROJ-42",
+    "sort_order": 1,
+    "parent_task_id": null,
+    "parent_task_sort_order": null,
+    "crew_member_id": null
+  },
+  "spawnedTask": {
+    "id": "task-e2e-spawned-001",
+    "project_id": "proj-e2e-001",
+    "title": "Template: Deploy notification service",
+    "description": "Template task for automated deployments",
+    "status": "todo",
+    "simple_id": "PROJ-99",
+    "sort_order": 2,
+    "parent_task_id": null,
+    "parent_task_sort_order": null,
+    "crew_member_id": null
+  },
+  "job": {
+    "id": "job-e2e-001",
+    "template_task_id": "task-e2e-template-001",
+    "schedule_cron": "*/1 * * * *",
+    "enabled": true,
+    "created_at": "2026-03-20T10:00:00Z",
+    "updated_at": "2026-03-20T10:00:00Z"
+  },
+  "successRun": {
+    "id": "run-e2e-success-001",
+    "job_id": "job-e2e-001",
+    "spawned_task_id": "task-e2e-spawned-001",
+    "status": "success",
+    "started_at": "2026-03-20T10:01:00Z",
+    "finished_at": "2026-03-20T10:01:05Z",
+    "outcome_json": null,
+    "created_at": "2026-03-20T10:01:00Z"
+  },
+  "failedRun": {
+    "id": "run-e2e-fail-001",
+    "job_id": "job-e2e-001",
+    "spawned_task_id": null,
+    "status": "failed",
+    "started_at": "2026-03-20T10:02:00Z",
+    "finished_at": "2026-03-20T10:02:01Z",
+    "outcome_json": "{\"error\":\"template task not found\"}",
+    "created_at": "2026-03-20T10:02:00Z"
+  },
+  "pendingRun": {
+    "id": "run-e2e-pending-001",
+    "job_id": "job-e2e-001",
+    "spawned_task_id": null,
+    "status": "pending",
+    "started_at": null,
+    "finished_at": null,
+    "outcome_json": null,
+    "created_at": "2026-03-20T10:03:00Z"
+  }
+}

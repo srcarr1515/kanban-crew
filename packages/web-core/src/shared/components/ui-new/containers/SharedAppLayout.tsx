@@ -3,6 +3,7 @@ import type { DropResult } from '@hello-pangea/dnd';
 import { Outlet } from '@tanstack/react-router';
 import { siDiscord, siGithub } from 'simple-icons';
 import {
+  ClockIcon,
   XIcon,
   PlusIcon,
   LayoutIcon,
@@ -30,6 +31,7 @@ import { useAppNavigation } from '@/shared/hooks/useAppNavigation';
 import { useCurrentAppDestination } from '@/shared/hooks/useCurrentAppDestination';
 import {
   getProjectDestination,
+  isScheduledJobsDestination,
   isWorkspacesDestination,
 } from '@/shared/lib/routes/appNavigation';
 import {
@@ -230,6 +232,7 @@ export function SharedAppLayout() {
     [currentDestination]
   );
   const isWorkspacesActive = isWorkspacesDestination(currentDestination);
+  const isScheduledJobsActive = isScheduledJobsDestination(currentDestination);
   const isWorkspaceSidebarPreviewEnabled =
     !isMobile && isWorkspacesActive && !isLeftSidebarVisible;
   const activeProjectId = projectDestination?.projectId ?? null;
@@ -250,6 +253,10 @@ export function SharedAppLayout() {
 
   const handleWorkspacesClick = useCallback(() => {
     appNavigation.goToWorkspaces();
+  }, [appNavigation]);
+
+  const handleScheduledJobsClick = useCallback(() => {
+    appNavigation.goToScheduledJobs();
   }, [appNavigation]);
 
   const handleProjectClick = useCallback(
@@ -396,6 +403,8 @@ export function SharedAppLayout() {
               projects={orderedProjects}
               onCreateProject={hasRepoAndBranch ? handleCreateProject : undefined}
               onWorkspacesClick={handleWorkspacesClick}
+              onScheduledJobsClick={handleScheduledJobsClick}
+              isScheduledJobsActive={isScheduledJobsActive}
               onProjectClick={handleProjectClick}
               onProjectsDragEnd={handleProjectsDragEnd}
               isSavingProjectOrder={isSavingProjectOrder}
@@ -527,6 +536,19 @@ export function SharedAppLayout() {
             >
               <LayoutIcon className="h-4 w-4" />
               Workspaces
+            </button>
+
+            {/* Scheduled Jobs link */}
+            <button
+              type="button"
+              onClick={() => {
+                appNavigation.goToScheduledJobs();
+                setIsDrawerOpen(false);
+              }}
+              className="flex items-center gap-2 px-4 py-3 text-sm text-normal hover:bg-secondary cursor-pointer"
+            >
+              <ClockIcon className="h-4 w-4" />
+              Scheduled Jobs
             </button>
 
             {/* Divider */}

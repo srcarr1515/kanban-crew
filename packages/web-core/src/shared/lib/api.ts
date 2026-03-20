@@ -1591,6 +1591,106 @@ export const skillsApi = {
   },
 };
 
+// Jobs API (scheduled jobs)
+export interface Job {
+  id: string;
+  template_task_id: string;
+  schedule_cron: string;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreateJobRequest {
+  template_task_id: string;
+  schedule_cron: string;
+  enabled?: boolean;
+}
+
+export interface UpdateJobRequest {
+  schedule_cron?: string;
+  enabled?: boolean;
+}
+
+export interface JobRun {
+  id: string;
+  job_id: string;
+  spawned_task_id: string | null;
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled';
+  started_at: string | null;
+  finished_at: string | null;
+  outcome_json: string | null;
+  created_at: string;
+}
+
+export const jobsApi = {
+  list: async (): Promise<Job[]> => {
+    const response = await makeRequest('/api/jobs');
+    return handleApiResponse<Job[]>(response);
+  },
+
+  get: async (jobId: string): Promise<Job> => {
+    const response = await makeRequest(`/api/jobs/${jobId}`);
+    return handleApiResponse<Job>(response);
+  },
+
+  create: async (data: CreateJobRequest): Promise<Job> => {
+    const response = await makeRequest('/api/jobs', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<Job>(response);
+  },
+
+  update: async (jobId: string, data: UpdateJobRequest): Promise<Job> => {
+    const response = await makeRequest(`/api/jobs/${jobId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    });
+    return handleApiResponse<Job>(response);
+  },
+
+  delete: async (jobId: string): Promise<Job> => {
+    const response = await makeRequest(`/api/jobs/${jobId}`, {
+      method: 'DELETE',
+    });
+    return handleApiResponse<Job>(response);
+  },
+
+  runNow: async (jobId: string): Promise<JobRun> => {
+    const response = await makeRequest(`/api/jobs/${jobId}/run-now`, {
+      method: 'POST',
+    });
+    return handleApiResponse<JobRun>(response);
+  },
+};
+
+// Job Runs API
+export const jobRunsApi = {
+  list: async (params?: {
+    job_id?: string;
+    status?: string;
+    from_date?: string;
+    to_date?: string;
+  }): Promise<JobRun[]> => {
+    const query = new URLSearchParams();
+    if (params?.job_id) query.set('job_id', params.job_id);
+    if (params?.status) query.set('status', params.status);
+    if (params?.from_date) query.set('from_date', params.from_date);
+    if (params?.to_date) query.set('to_date', params.to_date);
+    const qs = query.toString();
+    const response = await makeRequest(`/api/job-runs${qs ? `?${qs}` : ''}`);
+    return handleApiResponse<JobRun[]>(response);
+  },
+
+  retry: async (jobRunId: string): Promise<JobRun> => {
+    const response = await makeRequest(`/api/job-runs/${jobRunId}/retry`, {
+      method: 'POST',
+    });
+    return handleApiResponse<JobRun>(response);
+  },
+};
+
 // Search API (multi-repo file search)
 export const searchApi = {
   searchFiles: async (

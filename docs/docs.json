@@ -28,6 +28,7 @@
           "ai-chat",
           "browser-testing",
           "issue-management",
+          "core-features/scheduled-jobs",
           "reviewing-code",
           "remote-access",
           {

@@ -5,7 +5,8 @@ use axum::{
     response::Response,
 };
 use db::models::{
-    execution_process::ExecutionProcess, session::Session, tag::Tag, workspace::Workspace,
+    execution_process::ExecutionProcess, job::Job, job_run::JobRun, session::Session, tag::Tag,
+    workspace::Workspace,
 };
 use deployment::Deployment;
 use uuid::Uuid;
@@ -112,5 +113,49 @@ pub async fn load_session_middleware(
     };
 
     request.extensions_mut().insert(session);
+    Ok(next.run(request).await)
+}
+
+pub async fn load_job_middleware(
+    State(deployment): State<DeploymentImpl>,
+    Path(job_id): Path<String>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let job = match Job::find_by_id(&deployment.db().pool, &job_id).await {
+        Ok(Some(job)) => job,
+        Ok(None) => {
+            tracing::warn!("Job {} not found", job_id);
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch job {}: {}", job_id, e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    request.extensions_mut().insert(job);
+    Ok(next.run(request).await)
+}
+
+pub async fn load_job_run_middleware(
+    State(deployment): State<DeploymentImpl>,
+    Path(job_run_id): Path<String>,
+    mut request: Request,
+    next: Next,
+) -> Result<Response, StatusCode> {
+    let job_run = match JobRun::find_by_id(&deployment.db().pool, &job_run_id).await {
+        Ok(Some(run)) => run,
+        Ok(None) => {
+            tracing::warn!("JobRun {} not found", job_run_id);
+            return Err(StatusCode::NOT_FOUND);
+        }
+        Err(e) => {
+            tracing::error!("Failed to fetch job run {}: {}", job_run_id, e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    };
+
+    request.extensions_mut().insert(job_run);
     Ok(next.run(request).await)
 }

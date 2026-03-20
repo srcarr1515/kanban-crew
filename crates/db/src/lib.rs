@@ -72,6 +72,18 @@ pub struct DBService {
     pub pool: Pool<Sqlite>,
 }
 
+#[cfg(test)]
+pub(crate) async fn test_pool() -> Pool<Sqlite> {
+    let options = SqliteConnectOptions::from_str("sqlite::memory:")
+        .expect("valid connection string")
+        .create_if_missing(true);
+    let pool = SqlitePool::connect_with(options)
+        .await
+        .expect("connect to in-memory db");
+    run_migrations(&pool).await.expect("run migrations");
+    pool
+}
+
 impl DBService {
     pub async fn new() -> Result<DBService, Error> {
         let database_url = format!(

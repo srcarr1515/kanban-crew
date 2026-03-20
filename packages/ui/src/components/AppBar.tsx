@@ -6,6 +6,7 @@ import {
 } from '@hello-pangea/dnd';
 import type { ReactNode } from 'react';
 import {
+  ClockIcon,
   LayoutIcon,
   LinkIcon,
   PlusIcon,
@@ -51,6 +52,8 @@ interface AppBarProps {
   activeHostId?: string | null;
   onCreateProject?: () => void;
   onWorkspacesClick: () => void;
+  onScheduledJobsClick?: () => void;
+  isScheduledJobsActive?: boolean;
   onHostClick?: (hostId: string, status: AppBarHostStatus) => void;
   showWorkspacesButton?: boolean;
   onProjectClick: (projectId: string) => void;
@@ -111,6 +114,8 @@ export function AppBar({
   activeHostId = null,
   onCreateProject,
   onWorkspacesClick,
+  onScheduledJobsClick,
+  isScheduledJobsActive = false,
   onHostClick,
   showWorkspacesButton = true,
   onProjectClick,
@@ -161,6 +166,14 @@ export function AppBar({
               label="Workspaces"
               isActive={isWorkspacesActive}
               onClick={onWorkspacesClick}
+            />
+          )}
+          {onScheduledJobsClick && (
+            <AppBarButton
+              icon={ClockIcon}
+              label="Scheduled Jobs"
+              isActive={isScheduledJobsActive}
+              onClick={onScheduledJobsClick}
             />
           )}
           {hosts.map((host) => {
