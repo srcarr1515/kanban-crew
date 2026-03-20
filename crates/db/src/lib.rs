@@ -72,8 +72,7 @@ pub struct DBService {
     pub pool: Pool<Sqlite>,
 }
 
-#[cfg(test)]
-pub(crate) async fn test_pool() -> Pool<Sqlite> {
+pub async fn test_pool() -> Pool<Sqlite> {
     let options = SqliteConnectOptions::from_str("sqlite::memory:")
         .expect("valid connection string")
         .create_if_missing(true);

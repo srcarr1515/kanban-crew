@@ -216,9 +216,16 @@ pub async fn select_next_task(
 /// Check if auto-pickup should run and select the next task.
 /// Returns None if auto-pickup is disabled, no ready tasks, or the workspace has no linked task.
 ///
-/// Priority order:
-/// 1. Ready sub-tasks of the just-completed task (keeps work focused)
-/// 2. General ready tasks in the project (excluding sub-tasks with active parent workspaces)
+/// Behavior depends on the type of task that was just completed:
+///
+/// **Subtask completed (has parent_task_id):**
+/// - If sibling subtasks remain in "ready" → return None (don't auto-pick during subtask work)
+/// - If all siblings are done (parent fully completed) → search for ready top-level tasks
+///   filtered by agent: only tasks assigned to the completing agent or unassigned
+///
+/// **Non-subtask completed (standalone or parent task):**
+/// - Priority 1: Ready child sub-tasks of the completed task (keeps work focused)
+/// - Priority 2: General ready tasks in the project (excluding sub-tasks)
 ///
 /// The selected task is atomically claimed (transitioned to in_progress) to prevent
 /// race conditions when multiple agents complete simultaneously.
@@ -247,8 +254,7 @@ pub async fn try_select_next_task(
         return Ok(None);
     }
 
-    // If the completed task is itself a sub-task, look for sibling sub-tasks
-    // under the same parent. Otherwise, look for sub-tasks of the completed task.
+    // Check if the completed task is a sub-task
     let parent_task_id: Option<Uuid> =
         sqlx::query_scalar("SELECT parent_task_id FROM tasks WHERE id = ?")
             .bind(workspace_task_id)
@@ -257,51 +263,75 @@ pub async fn try_select_next_task(
             .map_err(AutoPickupError::Db)?
             .flatten();
 
-    let subtask_parent = parent_task_id.unwrap_or(workspace_task_id);
+    let candidate_tasks = if let Some(parent_id) = parent_task_id {
+        // Completed task IS a subtask — check if parent is fully completed
+        let ready_siblings = find_ready_subtasks(pool, parent_id).await?;
 
-    // Priority 1: Check for ready sub-tasks (siblings if completed task is a sub-task,
-    // children if completed task is a parent)
-    let sub_tasks = find_ready_subtasks(pool, subtask_parent).await?;
-
-    let candidate_tasks = if !sub_tasks.is_empty() {
-        tracing::debug!(
-            "Auto-pickup: found {} ready sub-task(s) of parent {subtask_parent}",
-            sub_tasks.len()
-        );
-        sub_tasks
-    } else {
-        // Priority 2: General ready tasks, filtering out those with active parent workspaces
-        let all_ready = Task::find_by_project_and_status(pool, project_id, "ready")
-            .await
-            .map_err(AutoPickupError::Db)?;
-
-        if all_ready.is_empty() {
-            tracing::debug!("No ready tasks in project {project_id}");
+        if !ready_siblings.is_empty() {
+            // Parent not yet fully completed — do NOT auto-pick during subtask work
+            tracing::debug!(
+                "Auto-pickup: {} ready sibling(s) remain under parent {parent_id}, skipping",
+                ready_siblings.len()
+            );
             return Ok(None);
         }
 
-        // Filter out ALL sub-tasks from the general pool. Sub-tasks should only be
-        // picked up via Priority 1 (by the parent's own workspace completing), never
-        // by an unrelated agent finishing a different ticket.
-        let subtask_ids = find_all_subtask_ids(pool, project_id).await?;
-        if !subtask_ids.is_empty() {
-            tracing::debug!(
-                "Auto-pickup: filtering out {} sub-task(s) from general pool",
-                subtask_ids.len()
-            );
-        }
-
-        let filtered: Vec<Task> = all_ready
-            .into_iter()
-            .filter(|t| !subtask_ids.contains(&t.id))
-            .collect();
+        // Parent fully completed (no ready siblings) — agent-filtered search
+        let completing_agent = get_crew_member_id(pool, workspace_task_id).await?;
+        tracing::debug!(
+            "Auto-pickup: parent {parent_id} fully completed, searching for agent-filtered tasks (agent: {:?})",
+            completing_agent
+        );
+        let filtered = find_ready_tasks_for_agent(pool, project_id, completing_agent.as_deref()).await?;
 
         if filtered.is_empty() {
-            tracing::debug!("No eligible ready tasks after filtering sub-tasks");
+            tracing::debug!("No eligible ready tasks for completing agent");
             return Ok(None);
         }
 
         filtered
+    } else {
+        // Completed task is NOT a subtask — existing priority logic
+        // Priority 1: Check for ready child sub-tasks
+        let sub_tasks = find_ready_subtasks(pool, workspace_task_id).await?;
+
+        if !sub_tasks.is_empty() {
+            tracing::debug!(
+                "Auto-pickup: found {} ready sub-task(s) of parent {workspace_task_id}",
+                sub_tasks.len()
+            );
+            sub_tasks
+        } else {
+            // Priority 2: General ready tasks, filtering out sub-tasks
+            let all_ready = Task::find_by_project_and_status(pool, project_id, "ready")
+                .await
+                .map_err(AutoPickupError::Db)?;
+
+            if all_ready.is_empty() {
+                tracing::debug!("No ready tasks in project {project_id}");
+                return Ok(None);
+            }
+
+            let subtask_ids = find_all_subtask_ids(pool, project_id).await?;
+            if !subtask_ids.is_empty() {
+                tracing::debug!(
+                    "Auto-pickup: filtering out {} sub-task(s) from general pool",
+                    subtask_ids.len()
+                );
+            }
+
+            let filtered: Vec<Task> = all_ready
+                .into_iter()
+                .filter(|t| !subtask_ids.contains(&t.id))
+                .collect();
+
+            if filtered.is_empty() {
+                tracing::debug!("No eligible ready tasks after filtering sub-tasks");
+                return Ok(None);
+            }
+
+            filtered
+        }
     };
 
     // Build context for the strategy
@@ -358,6 +388,59 @@ pub async fn try_select_next_task(
         selected_task_title: selected_task.title.clone(),
         parent_task_id,
     }))
+}
+
+/// Get the crew_member_id for a task (the agent assigned to it).
+async fn get_crew_member_id(
+    pool: &sqlx::SqlitePool,
+    task_id: Uuid,
+) -> Result<Option<String>, AutoPickupError> {
+    sqlx::query_scalar("SELECT crew_member_id FROM tasks WHERE id = ?")
+        .bind(task_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(AutoPickupError::Db)?
+        .ok_or(AutoPickupError::TaskNotFound(task_id))
+}
+
+/// Find ready top-level tasks (no parent) assigned to the given agent or unassigned.
+/// When `agent_id` is None, only unassigned tasks are returned.
+async fn find_ready_tasks_for_agent(
+    pool: &sqlx::SqlitePool,
+    project_id: Uuid,
+    agent_id: Option<&str>,
+) -> Result<Vec<Task>, AutoPickupError> {
+    match agent_id {
+        Some(id) => {
+            sqlx::query_as::<_, Task>(
+                r#"SELECT id, project_id, title, description, status, parent_workspace_id, created_at, updated_at
+                   FROM tasks
+                   WHERE project_id = ? AND status = 'ready'
+                     AND parent_task_id IS NULL
+                     AND (crew_member_id = ? OR crew_member_id IS NULL)
+                   ORDER BY sort_order ASC, created_at ASC"#,
+            )
+            .bind(project_id)
+            .bind(id)
+            .fetch_all(pool)
+            .await
+            .map_err(AutoPickupError::Db)
+        }
+        None => {
+            sqlx::query_as::<_, Task>(
+                r#"SELECT id, project_id, title, description, status, parent_workspace_id, created_at, updated_at
+                   FROM tasks
+                   WHERE project_id = ? AND status = 'ready'
+                     AND parent_task_id IS NULL
+                     AND crew_member_id IS NULL
+                   ORDER BY sort_order ASC, created_at ASC"#,
+            )
+            .bind(project_id)
+            .fetch_all(pool)
+            .await
+            .map_err(AutoPickupError::Db)
+        }
+    }
 }
 
 /// Find ready sub-tasks of a given parent task.
@@ -417,4 +500,158 @@ pub enum AutoPickupError {
     LlmError(String),
     #[error("Workspace creation failed: {0}")]
     WorkspaceCreation(String),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_db() -> DBService {
+        let pool = db::test_pool().await;
+        DBService { pool }
+    }
+
+    async fn insert_project(pool: &sqlx::SqlitePool, id: Uuid, auto_pickup: bool) {
+        sqlx::query(
+            "INSERT INTO projects (id, name, auto_pickup_enabled) VALUES (?, 'Test Project', ?)",
+        )
+        .bind(id)
+        .bind(auto_pickup)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_crew_member(pool: &sqlx::SqlitePool, id: &str) {
+        sqlx::query(
+            "INSERT INTO crew_members (id, name, role) VALUES (?, 'Agent', 'developer')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn insert_task(
+        pool: &sqlx::SqlitePool,
+        id: Uuid,
+        project_id: Uuid,
+        status: &str,
+        parent_task_id: Option<Uuid>,
+        crew_member_id: Option<&str>,
+    ) {
+        sqlx::query(
+            r#"INSERT INTO tasks (id, project_id, title, status, parent_task_id, crew_member_id)
+               VALUES (?, ?, 'Task', ?, ?, ?)"#,
+        )
+        .bind(id)
+        .bind(project_id)
+        .bind(status)
+        .bind(parent_task_id)
+        .bind(crew_member_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn parent_complete_picks_agent_assigned_ticket() {
+        let db = setup_db().await;
+        let pool = &db.pool;
+
+        let project_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let subtask_id = Uuid::new_v4(); // the just-completed subtask
+        let ready_ticket_id = Uuid::new_v4(); // assigned to same agent
+        let agent_id = Uuid::new_v4().to_string();
+
+        insert_project(pool, project_id, true).await;
+        insert_crew_member(pool, &agent_id).await;
+
+        // Parent task (in_progress)
+        insert_task(pool, parent_id, project_id, "in_progress", None, Some(&agent_id)).await;
+        // Completed subtask (done) — the one the agent just finished
+        insert_task(pool, subtask_id, project_id, "done", Some(parent_id), Some(&agent_id)).await;
+        // Ready top-level ticket assigned to the same agent
+        insert_task(pool, ready_ticket_id, project_id, "ready", None, Some(&agent_id)).await;
+
+        let result = try_select_next_task(&db, subtask_id).await.unwrap();
+        assert!(result.is_some(), "should select the agent-assigned ready ticket");
+        assert_eq!(result.unwrap().selected_task_id, ready_ticket_id);
+    }
+
+    #[tokio::test]
+    async fn parent_complete_picks_unassigned_ticket() {
+        let db = setup_db().await;
+        let pool = &db.pool;
+
+        let project_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let subtask_id = Uuid::new_v4();
+        let unassigned_ticket_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4().to_string();
+
+        insert_project(pool, project_id, true).await;
+        insert_crew_member(pool, &agent_id).await;
+
+        insert_task(pool, parent_id, project_id, "in_progress", None, Some(&agent_id)).await;
+        insert_task(pool, subtask_id, project_id, "done", Some(parent_id), Some(&agent_id)).await;
+        // Ready top-level ticket with NO assignee
+        insert_task(pool, unassigned_ticket_id, project_id, "ready", None, None).await;
+
+        let result = try_select_next_task(&db, subtask_id).await.unwrap();
+        assert!(result.is_some(), "should select the unassigned ready ticket");
+        assert_eq!(result.unwrap().selected_task_id, unassigned_ticket_id);
+    }
+
+    #[tokio::test]
+    async fn parent_complete_skips_other_agents_tickets() {
+        let db = setup_db().await;
+        let pool = &db.pool;
+
+        let project_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let subtask_id = Uuid::new_v4();
+        let other_agent_ticket_id = Uuid::new_v4();
+        let agent_a = Uuid::new_v4().to_string();
+        let agent_b = Uuid::new_v4().to_string();
+
+        insert_project(pool, project_id, true).await;
+        insert_crew_member(pool, &agent_a).await;
+        insert_crew_member(pool, &agent_b).await;
+
+        insert_task(pool, parent_id, project_id, "in_progress", None, Some(&agent_a)).await;
+        insert_task(pool, subtask_id, project_id, "done", Some(parent_id), Some(&agent_a)).await;
+        // Ready ticket assigned to a DIFFERENT agent
+        insert_task(pool, other_agent_ticket_id, project_id, "ready", None, Some(&agent_b)).await;
+
+        let result = try_select_next_task(&db, subtask_id).await.unwrap();
+        assert!(result.is_none(), "should NOT pick ticket assigned to another agent");
+    }
+
+    #[tokio::test]
+    async fn subtask_completion_with_siblings_remaining_does_not_trigger() {
+        let db = setup_db().await;
+        let pool = &db.pool;
+
+        let project_id = Uuid::new_v4();
+        let parent_id = Uuid::new_v4();
+        let done_subtask_id = Uuid::new_v4(); // just completed
+        let ready_sibling_id = Uuid::new_v4(); // still ready
+        let unrelated_ready_id = Uuid::new_v4();
+        let agent_id = Uuid::new_v4().to_string();
+
+        insert_project(pool, project_id, true).await;
+        insert_crew_member(pool, &agent_id).await;
+
+        insert_task(pool, parent_id, project_id, "in_progress", None, Some(&agent_id)).await;
+        insert_task(pool, done_subtask_id, project_id, "done", Some(parent_id), Some(&agent_id)).await;
+        // A sibling subtask still in "ready" — parent not fully complete
+        insert_task(pool, ready_sibling_id, project_id, "ready", Some(parent_id), Some(&agent_id)).await;
+        // An unrelated ready ticket
+        insert_task(pool, unrelated_ready_id, project_id, "ready", None, Some(&agent_id)).await;
+
+        let result = try_select_next_task(&db, done_subtask_id).await.unwrap();
+        assert!(result.is_none(), "should NOT auto-pick when sibling subtasks remain");
+    }
 }
