@@ -253,6 +253,7 @@ export function KanbanCardContent<TTag extends KanbanTag = KanbanTag>({
               type="button"
               onClick={onPriorityClick}
               onMouseDown={(e) => e.stopPropagation()}
+              onMouseUp={(e) => e.stopPropagation()}
               className="flex items-center cursor-pointer hover:bg-secondary rounded-sm transition-colors"
             >
               <PriorityIcon priority={priority} />
@@ -270,8 +271,12 @@ export function KanbanCardContent<TTag extends KanbanTag = KanbanTag>({
         {onAssigneeClick ? (
           <button
             type="button"
-            onClick={onAssigneeClick}
+            onClick={(e) => {
+              e.stopPropagation();
+              onAssigneeClick(e);
+            }}
             onMouseDown={(e) => e.stopPropagation()}
+            onMouseUp={(e) => e.stopPropagation()}
             className="cursor-pointer hover:bg-secondary rounded-sm transition-colors"
           >
             <KanbanAssignee assignees={assignees} />
