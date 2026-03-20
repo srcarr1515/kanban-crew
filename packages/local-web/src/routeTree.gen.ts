@@ -14,8 +14,8 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as OnboardingSignInRouteImport } from './routes/onboarding_.sign-in'
 import { Route as AppWorkspacesRouteImport } from './routes/_app.workspaces'
-import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppScheduledJobsRouteImport } from './routes/_app.scheduled-jobs'
+import { Route as AppNotificationsRouteImport } from './routes/_app.notifications'
 import { Route as AppMigrateRouteImport } from './routes/_app.migrate'
 import { Route as WorkspacesWorkspaceIdVscodeRouteImport } from './routes/workspaces.$workspaceId.vscode'
 import { Route as AppWorkspacesElectricTestRouteImport } from './routes/_app.workspaces_.electric-test'
@@ -51,14 +51,14 @@ const AppWorkspacesRoute = AppWorkspacesRouteImport.update({
   path: '/workspaces',
   getParentRoute: () => AppRoute,
 } as any)
-const AppNotificationsRoute = AppNotificationsRouteImport.update({
-  id: '/notifications',
-  path: '/notifications',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppScheduledJobsRoute = AppScheduledJobsRouteImport.update({
   id: '/scheduled-jobs',
   path: '/scheduled-jobs',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/notifications',
+  path: '/notifications',
   getParentRoute: () => AppRoute,
 } as any)
 const AppMigrateRoute = AppMigrateRouteImport.update({
@@ -278,18 +278,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppWorkspacesRouteImport
       parentRoute: typeof AppRoute
     }
-    '/_app/notifications': {
-      id: '/_app/notifications'
-      path: '/notifications'
-      fullPath: '/notifications'
-      preLoaderRoute: typeof AppNotificationsRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/_app/scheduled-jobs': {
       id: '/_app/scheduled-jobs'
       path: '/scheduled-jobs'
       fullPath: '/scheduled-jobs'
       preLoaderRoute: typeof AppScheduledJobsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/notifications': {
+      id: '/_app/notifications'
+      path: '/notifications'
+      fullPath: '/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/migrate': {
