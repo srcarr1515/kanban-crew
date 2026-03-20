@@ -397,12 +397,26 @@ async fn chat_completion(
 
         if !tasks.is_empty() {
             system_prompt.push_str("\n\n# Current Tasks\nHere are the existing tasks on the board. Use these task_id values when proposing modifications or deletions:\n");
-            for (id, title, _desc, status, parent_id) in &tasks {
+            for (id, title, desc, status, parent_id) in &tasks {
                 let indent = if parent_id.is_some() { "  " } else { "" };
                 system_prompt.push_str(&format!(
                     "{}- [{}] {} (id: {})\n",
                     indent, status, title, id
                 ));
+                if let Some(d) = desc {
+                    let trimmed = d.trim();
+                    if !trimmed.is_empty() {
+                        // Cap description to ~200 chars to avoid bloating the prompt
+                        let preview = if trimmed.len() > 200 {
+                            &trimmed[..trimmed.floor_char_boundary(200)]
+                        } else {
+                            trimmed
+                        };
+                        for line in preview.lines() {
+                            system_prompt.push_str(&format!("{}    {}\n", indent, line));
+                        }
+                    }
+                }
             }
         }
     }

@@ -20,7 +20,7 @@ import {
   ArrowDownIcon,
   ArrowBendUpLeftIcon,
 } from '@phosphor-icons/react';
-import type { Proposal, ProposalTicket } from '@/shared/lib/local/chatApi';
+import { type Proposal, type ProposalTicket, buildTicketDescription } from '@/shared/lib/local/chatApi';
 import { createLocalTask } from '@/shared/lib/local/localApi';
 import { useQueryClient } from '@tanstack/react-query';
 import { defineModal } from '@/shared/lib/modals';
@@ -213,7 +213,7 @@ const EditProposalDialogImpl = create<EditProposalProps>(
           const parent = await createLocalTask({
             project_id: projectId,
             title: ticket.title.trim(),
-            description: ticket.description.trim() || undefined,
+            description: buildTicketDescription(ticket).trim() || undefined,
             status: ticket.status || 'todo',
             proposing_crew_member_id: crewMemberId,
           });
@@ -225,7 +225,7 @@ const EditProposalDialogImpl = create<EditProposalProps>(
             await createLocalTask({
               project_id: projectId,
               title: sub.title.trim(),
-              description: sub.description.trim() || undefined,
+              description: buildTicketDescription(sub).trim() || undefined,
               status: sub.status || 'todo',
               parent_task_id: parent.id,
               parent_task_sort_order: i,
@@ -329,6 +329,31 @@ const EditProposalDialogImpl = create<EditProposalProps>(
                         className="w-full resize-none rounded-md border border-border bg-primary px-3 py-2 text-sm text-high placeholder:text-low focus:outline-none focus:ring-1 focus:ring-brand disabled:opacity-50"
                       />
                     </div>
+                    {ticket.files_affected && ticket.files_affected.length > 0 && (
+                      <div>
+                        <Label className="text-xs">Files Affected</Label>
+                        <div className="mt-1 space-y-0.5">
+                          {ticket.files_affected.map((f, fi) => (
+                            <div key={fi} className="text-xs text-muted-foreground font-mono bg-muted rounded px-2 py-0.5">
+                              {f}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {ticket.acceptance_criteria && ticket.acceptance_criteria.length > 0 && (
+                      <div>
+                        <Label className="text-xs">Acceptance Criteria</Label>
+                        <ul className="mt-1 space-y-0.5">
+                          {ticket.acceptance_criteria.map((c, ci) => (
+                            <li key={ci} className="text-xs text-muted-foreground flex items-start gap-1.5">
+                              <span className="shrink-0 mt-0.5">☐</span>
+                              <span>{c}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
                         <Label

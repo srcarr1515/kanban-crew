@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import { CheckCircleIcon, PencilSimpleIcon, SpinnerIcon } from '@phosphor-icons/react';
-import type { Proposal } from '@/shared/lib/local/chatApi';
+import { CheckCircleIcon, PencilSimpleIcon, SpinnerIcon, FileCodeIcon, CheckSquareIcon } from '@phosphor-icons/react';
+import { type Proposal, buildTicketDescription } from '@/shared/lib/local/chatApi';
 import { createLocalTask } from '@/shared/lib/local/localApi';
 import { useProjectContext } from '@/shared/hooks/useProjectContext';
 import { useQueryClient } from '@tanstack/react-query';
@@ -28,7 +28,7 @@ export function ProposalCard({ proposal, crewMemberId }: ProposalCardProps) {
         const parent = await createLocalTask({
           project_id: projectId,
           title: ticket.title,
-          description: ticket.description,
+          description: buildTicketDescription(ticket),
           status: ticket.status || 'todo',
           proposing_crew_member_id: crewMemberId,
         });
@@ -38,7 +38,7 @@ export function ProposalCard({ proposal, crewMemberId }: ProposalCardProps) {
             await createLocalTask({
               project_id: projectId,
               title: sub.title,
-              description: sub.description,
+              description: buildTicketDescription(sub),
               status: sub.status || 'todo',
               parent_task_id: parent.id,
               parent_task_sort_order: i,
@@ -78,6 +78,20 @@ export function ProposalCard({ proposal, crewMemberId }: ProposalCardProps) {
                     {ticket.description}
                   </div>
                 )}
+                <div className="flex gap-3 mt-1">
+                  {ticket.files_affected && ticket.files_affected.length > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                      <FileCodeIcon className="size-3" />
+                      {ticket.files_affected.length} file{ticket.files_affected.length !== 1 ? 's' : ''}
+                    </span>
+                  )}
+                  {ticket.acceptance_criteria && ticket.acceptance_criteria.length > 0 && (
+                    <span className="inline-flex items-center gap-0.5 text-[10px] text-muted-foreground">
+                      <CheckSquareIcon className="size-3" />
+                      {ticket.acceptance_criteria.length} criteria
+                    </span>
+                  )}
+                </div>
               </div>
             </div>
             {ticket.subtasks && ticket.subtasks.length > 0 && (

@@ -90,11 +90,32 @@ export interface ProposalTicket {
   title: string;
   description: string;
   status: string;
+  files_affected?: string[];
+  acceptance_criteria?: string[];
   subtasks?: ProposalTicket[];
 }
 
 export interface Proposal {
   tickets: ProposalTicket[];
+}
+
+/** Build a structured description from the enriched proposal fields. */
+export function buildTicketDescription(ticket: ProposalTicket): string {
+  let desc = ticket.description || '';
+
+  if (ticket.files_affected && ticket.files_affected.length > 0) {
+    if (desc) desc += '\n\n';
+    desc += '## Files Affected\n';
+    desc += ticket.files_affected.map((f) => `- ${f}`).join('\n');
+  }
+
+  if (ticket.acceptance_criteria && ticket.acceptance_criteria.length > 0) {
+    if (desc) desc += '\n\n';
+    desc += '## Acceptance Criteria\n';
+    desc += ticket.acceptance_criteria.map((c) => `- [ ] ${c}`).join('\n');
+  }
+
+  return desc;
 }
 
 export interface ModifyProposalItem {
@@ -271,6 +292,12 @@ function normalizeTicket(raw: unknown): ProposalTicket | null {
     title: t.title.trim(),
     description: typeof t.description === 'string' ? t.description : '',
     status: typeof t.status === 'string' ? t.status : 'todo',
+    files_affected: Array.isArray(t.files_affected)
+      ? t.files_affected.filter((f): f is string => typeof f === 'string')
+      : undefined,
+    acceptance_criteria: Array.isArray(t.acceptance_criteria)
+      ? t.acceptance_criteria.filter((c): c is string => typeof c === 'string')
+      : undefined,
     subtasks: Array.isArray(t.subtasks)
       ? (t.subtasks.map(normalizeTicket).filter(Boolean) as ProposalTicket[])
       : undefined,

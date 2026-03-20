@@ -742,6 +742,11 @@ export function KanbanContainer() {
 
       if (result.type === 'subtask') {
         const subTask = issuesById.get(result.subtaskId);
+
+        // Ensure parent stays in_progress (the drag already moved it, but
+        // subsequent query refetches can race — this makes it explicit)
+        updateIssue(issueId, { status_id: 'in_progress' });
+
         // Check if parent already has a workspace we can reuse
         const parentWorkspaces = getWorkspacesForIssue(issueId);
         const parentWsId = parentWorkspaces[0]?.local_workspace_id;
@@ -752,8 +757,7 @@ export function KanbanContainer() {
             // Re-link workspace to the sub-task
             await linkWorkspaceToTask(result.subtaskId, parentWsId);
 
-            // Move sub-task to in_progress; parent stays in_progress
-            // (parent will transition to in_review once all sub-tasks complete)
+            // Move sub-task to in_progress
             updateIssue(result.subtaskId, { status_id: 'in_progress' });
 
             // Resolve executor config
