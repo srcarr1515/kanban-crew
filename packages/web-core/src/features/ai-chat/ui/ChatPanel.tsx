@@ -10,6 +10,7 @@ import {
   ArrowsOutSimpleIcon,
   PaperclipIcon,
   PlusIcon,
+  StopIcon,
   TrashIcon,
   XIcon,
 } from '@phosphor-icons/react';
@@ -52,6 +53,12 @@ export function ChatPanel() {
   const [toolStatus, setToolStatus] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
+  const handleStop = useCallback(() => {
+    abortRef.current = true;
+    abortControllerRef.current?.abort();
+  }, []);
 
   // ── Crew members ──────────────────────────────────────────────
   const { data: crewMembers = [] } = useQuery({
@@ -223,6 +230,8 @@ export function ChatPanel() {
     setVisionFallback(null);
     setToolStatus(null);
     abortRef.current = false;
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     // Check before streaming so we capture the pre-send state
     const activeThread = threads.find((t) => t.id === activeThreadId);
@@ -230,7 +239,7 @@ export function ChatPanel() {
 
     try {
       let accumulated = '';
-      for await (const chunk of streamChatCompletion(activeThreadId, effectiveText || ' ', selectedCrewId, chatAttachments)) {
+      for await (const chunk of streamChatCompletion(activeThreadId, effectiveText || ' ', selectedCrewId, chatAttachments, controller.signal)) {
         if (abortRef.current) break;
         if (chunk.type === 'text') {
           // Clear tool status once text starts arriving
@@ -244,12 +253,18 @@ export function ChatPanel() {
         }
       }
     } catch (err) {
-      // Extract a human-readable message from the API error
-      const raw = err instanceof Error ? err.message : String(err);
-      // The API wraps errors as JSON with {error:{message}}; try to extract it
-      const jsonMatch = raw.match(/"message"\s*:\s*"([^"]+)"/);
-      setErrorMessage(jsonMatch ? jsonMatch[1] : raw);
+      // Ignore abort errors — they're expected when the user clicks stop
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        // intentionally empty
+      } else {
+        // Extract a human-readable message from the API error
+        const raw = err instanceof Error ? err.message : String(err);
+        // The API wraps errors as JSON with {error:{message}}; try to extract it
+        const jsonMatch = raw.match(/"message"\s*:\s*"([^"]+)"/);
+        setErrorMessage(jsonMatch ? jsonMatch[1] : raw);
+      }
     } finally {
+      abortControllerRef.current = null;
       setIsStreaming(false);
       setStreamingContent('');
       setToolStatus(null);
@@ -437,10 +452,19 @@ export function ChatPanel() {
             {lockedCrewMember ? `${lockedCrewMember.name} is thinking…` : 'Thinking…'}
           </span>
           {visionFallback && (
-            <span className="ml-auto text-[10px] text-low" title={`Fallback: using ${visionFallback.vision_provider}/${visionFallback.vision_model} for vision`}>
+            <span className="text-[10px] text-low" title={`Fallback: using ${visionFallback.vision_provider}/${visionFallback.vision_model} for vision`}>
               via {visionFallback.vision_model}
             </span>
           )}
+          <button
+            type="button"
+            onClick={handleStop}
+            className="ml-auto shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium text-brand/80 hover:text-brand hover:bg-brand/10 transition-colors"
+            title="Stop generating"
+          >
+            <StopIcon className="size-3.5" weight="fill" />
+            Stop
+          </button>
         </div>
       )}
 

@@ -204,7 +204,8 @@ export async function* streamChatCompletion(
   threadId: string,
   content: string,
   crewMemberId?: string | null,
-  attachments?: ChatAttachment[]
+  attachments?: ChatAttachment[],
+  signal?: AbortSignal
 ): AsyncGenerator<StreamChunk, void, unknown> {
   const body: Record<string, unknown> = { thread_id: threadId, content };
   if (crewMemberId) body.crew_member_id = crewMemberId;
@@ -215,6 +216,7 @@ export async function* streamChatCompletion(
     {
       method: 'POST',
       body: JSON.stringify(body),
+      signal,
     }
   );
 

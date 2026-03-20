@@ -792,7 +792,7 @@ async fn chat_completion_provider_api(
     // ── Tool execution loop (non-streaming) ──────────────────────────────
     let mut messages = initial_messages;
     let mut status_events: Vec<String> = Vec::new();
-    let max_rounds = 10;
+    let max_rounds = 50;
 
     let final_text = 'tool_loop: {
         for _ in 0..max_rounds {
