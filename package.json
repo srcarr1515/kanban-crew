@@ -1,6 +1,6 @@
 {
   "name": "kanban-crew",
-  "version": "0.1.40",
+  "version": "0.1.41",
   "private": true,
   "bin": {
     "kanban-crew": "npx-cli/bin/cli.js"
