@@ -144,7 +144,7 @@ async fn create_crew_member(
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id, name, role, avatar, role_prompt, tool_access, personality, ai_provider, ai_model, skills, can_create_workspace, can_merge_workspace, can_propose_tasks, can_query_database, created_at, updated_at"#,
     )
-    .bind(id)
+    .bind(id.to_string())
     .bind(&request.name)
     .bind(&request.role)
     .bind(&avatar)
@@ -229,7 +229,7 @@ async fn update_crew_member(
     .bind(request.can_merge_workspace)
     .bind(request.can_propose_tasks)
     .bind(request.can_query_database)
-    .bind(id)
+    .bind(id.to_string())
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| ApiError::BadRequest(format!("Crew member {id} not found")))?;
@@ -244,7 +244,7 @@ async fn delete_crew_member(
     let pool = &deployment.db().pool;
 
     sqlx::query("DELETE FROM crew_members WHERE id = ?")
-        .bind(id)
+        .bind(id.to_string())
         .execute(pool)
         .await?;
 

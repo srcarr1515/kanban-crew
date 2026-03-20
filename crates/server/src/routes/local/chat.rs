@@ -15,6 +15,7 @@ use tokio::io::AsyncBufReadExt;
 use utils::response::ApiResponse;
 use uuid::Uuid;
 
+use super::chat_tools;
 use crate::{DeploymentImpl, error::ApiError};
 
 // ── DB types ────────────────────────────────────────────────────────────────
@@ -24,7 +25,7 @@ pub struct ChatThread {
     pub id: String,
     pub project_id: Uuid,
     pub issue_id: Option<String>,
-    pub crew_member_id: Option<Uuid>,
+    pub crew_member_id: Option<String>,
     pub title: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
@@ -52,13 +53,13 @@ pub struct CreateThreadRequest {
     pub project_id: Uuid,
     pub issue_id: Option<String>,
     pub title: Option<String>,
-    pub crew_member_id: Option<Uuid>,
+    pub crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateThreadRequest {
     pub title: Option<String>,
-    pub crew_member_id: Option<Uuid>,
+    pub crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,7 +77,7 @@ pub struct ImageAttachment {
 pub struct SendMessageRequest {
     pub thread_id: String,
     pub content: String,
-    pub crew_member_id: Option<Uuid>,
+    pub crew_member_id: Option<String>,
     pub images: Option<Vec<ImageAttachment>>,
 }
 
@@ -196,53 +197,22 @@ async fn list_messages(
 
 // ── System prompt ───────────────────────────────────────────────────────────
 
-const SYSTEM_PROMPT: &str = "\
-You are a helpful project planning assistant embedded in a Kanban board app. \
-Help the user brainstorm features, discuss implementation strategies, and manage tasks.\n\n\
-# Creating Tickets\n\
-When the user asks you to create tickets or plan work, respond with a structured proposal using this EXACT JSON format embedded in your response:\n\n\
-```proposal\n\
-{\"tickets\": [{\"title\": \"Parent task\", \"description\": \"What to do\", \"status\": \"todo\", \"subtasks\": [{\"title\": \"Child step\", \"description\": \"Sub-step detail\", \"status\": \"todo\"}]}]}\n\
-```\n\n\
-Always include a proposal block when suggesting concrete tasks. The user will see a confirmation card and can choose to create the tickets. \
-Keep ticket titles concise and descriptions actionable. Use status \"todo\" for new work.\n\n\
-Grouping rules:\n\
-- Use separate top-level tickets for distinct, unrelated work items.\n\
-- Use subtasks when a ticket has implementation steps that belong together as a batch (e.g. backend + frontend for the same feature, or setup + implementation + tests for one piece of work).\n\
-- Omit the subtasks field entirely for simple, self-contained tickets.\n\
-- Subtasks should not have their own subtasks — keep the hierarchy to one level deep.\n\n\
-# Modifying Tickets\n\
-When the user asks you to update, modify, rename, change the description, or move a ticket to a different status, respond with:\n\n\
-```modify_proposal\n\
-{\"modifications\": [{\"task_id\": \"the-task-id\", \"title\": \"Updated title\", \"description\": \"Updated description\", \"status\": \"ready\"}]}\n\
-```\n\n\
-Only include fields that should change — omit fields that stay the same. The task_id field is always required.\n\n\
-# Deleting Tickets\n\
-When the user asks you to delete or remove a ticket, respond with:\n\n\
-```delete_proposal\n\
-{\"deletions\": [{\"task_id\": \"the-task-id\", \"title\": \"Task title for confirmation\"}]}\n\
-```\n\n\
-The user will see a confirmation card before any modifications or deletions are applied. \
-Never modify or delete tickets without using the proposal format — always let the user confirm first.\n\n\
-# Querying the Database\n\
-You can research data in the database by writing read-only SQL queries. Wrap your query in a special code block:\n\n\
-```query\n\
-SELECT id, title, status FROM tasks WHERE project_id = ? LIMIT 20\n\
-```\n\n\
-The user will see a \"Run Query\" button and can execute it to see the results as a table. \
-Only SELECT, WITH, and EXPLAIN queries are allowed — no mutations. Results are capped at 500 rows.\n\n\
-## Database Schema\n\
-The database is SQLite. Key tables:\n\n\
-**projects** — id (BLOB/UUID), name (TEXT), created_at, updated_at\n\
-**tasks** — id (BLOB/UUID), project_id (BLOB FK→projects), title (TEXT), description (TEXT), status (TEXT: todo/ready/in_progress/in_review/done/cancelled), sort_order (INT), parent_task_id (BLOB, optional FK→tasks), parent_task_sort_order (REAL), created_at, updated_at\n\
-**chat_threads** — id (TEXT), project_id (BLOB FK→projects), issue_id (TEXT), crew_member_id (BLOB FK→crew_members), title (TEXT), created_at, updated_at\n\
-**chat_messages** — id (TEXT), thread_id (TEXT FK→chat_threads), role (TEXT: user/assistant/system), content (TEXT), metadata (TEXT), created_at\n\
-**crew_members** — id (BLOB/UUID), name (TEXT), role (TEXT), avatar (TEXT), role_prompt (TEXT), tool_access (TEXT/JSON), personality (TEXT), ai_provider (TEXT), ai_model (TEXT), can_create_workspace (BOOL), can_merge_workspace (BOOL), can_propose_tasks (BOOL), can_query_database (BOOL), created_at, updated_at\n\
-**workspaces** — id (BLOB/UUID), branch (TEXT), container_ref (TEXT), created_at, updated_at\n\
-**sessions** — id (BLOB/UUID), workspace_id (BLOB FK→workspaces), executor (TEXT), created_at, updated_at\n\
-**execution_processes** — id (BLOB/UUID), session_id (BLOB FK→sessions), run_reason (TEXT), executor_action (TEXT), status (TEXT), created_at, updated_at\n\n\
-Note: BLOB id columns store UUIDs as binary. Use hex(id) to display them as readable strings, or cast with quote(id) if needed.\n\
-When filtering by a known UUID string like 'abc-123-...', use the tasks/projects as shown in the Current Tasks section above — the id values listed there can be used directly.";
+/// In debug builds, read the prompt from disk on every call (hot-reloadable).
+/// In release builds, embed the file at compile time.
+fn get_system_prompt() -> String {
+    #[cfg(debug_assertions)]
+    {
+        std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("prompts/chat_system.md"),
+        )
+        .expect("failed to read prompts/chat_system.md")
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        include_str!("../../prompts/chat_system.md").to_string()
+    }
+}
 
 // ── AI completion (streaming) ───────────────────────────────────────────────
 
@@ -315,7 +285,7 @@ async fn chat_completion(
     let effective_crew_member_id = if request.crew_member_id.is_some() {
         request.crew_member_id
     } else {
-        sqlx::query_scalar::<_, Option<Uuid>>(
+        sqlx::query_scalar::<_, Option<String>>(
             "SELECT crew_member_id FROM chat_threads WHERE id = ?",
         )
         .bind(&request.thread_id)
@@ -324,7 +294,7 @@ async fn chat_completion(
         .flatten()
     };
 
-    let crew_row = if let Some(crew_id) = effective_crew_member_id {
+    let crew_row = if let Some(ref crew_id) = effective_crew_member_id {
         sqlx::query_as::<_, CrewMemberRow>(
             "SELECT name, role_prompt, personality, ai_provider, ai_model FROM crew_members WHERE id = ?",
         )
@@ -336,11 +306,11 @@ async fn chat_completion(
     };
 
     // Resolve active skills for this crew member via the junction table
-    let skills_section = if let Some(crew_id) = effective_crew_member_id {
+    let skills_section = if let Some(ref crew_id) = effective_crew_member_id {
         let active_skills =
             db::models::crew_member_skill::CrewMemberSkill::list_skills_for_crew_member(
                 pool,
-                &crew_id.to_string(),
+                crew_id,
             )
             .await
             .unwrap_or_default();
@@ -395,7 +365,7 @@ async fn chat_completion(
         ));
         prompt.push_str(&skills_section);
         prompt.push_str("\n# Task Instructions\n");
-        prompt.push_str(SYSTEM_PROMPT);
+        prompt.push_str(&get_system_prompt());
         prompt
     } else {
         let mut prompt = String::new();
@@ -403,7 +373,7 @@ async fn chat_completion(
             prompt.push_str(&skills_section);
             prompt.push('\n');
         }
-        prompt.push_str(SYSTEM_PROMPT);
+        prompt.push_str(&get_system_prompt());
         prompt
     };
 
@@ -556,6 +526,7 @@ async fn chat_completion(
             &base_url,
             &model,
             vision_fallback_meta.as_ref(),
+            thread_project_id,
         )
         .await
     } else {
@@ -786,24 +757,190 @@ async fn chat_completion_provider_api(
     base_url: &str,
     model: &str,
     vision_fallback: Option<&serde_json::Value>,
+    project_id: Option<Uuid>,
 ) -> Result<Response<Body>, ApiError> {
+    let is_openai = is_openai_compatible(provider_id);
+    let client = Client::new();
+
+    // Resolve project repos for tool use
+    let repos = if let Some(pid) = project_id {
+        chat_tools::get_project_repos(pool, pid)
+            .await
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let has_tools = !repos.is_empty();
+
+    // Build initial messages array from history
     let non_system: Vec<&ChatMessage> = history.iter().filter(|m| m.role != "system").collect();
     let last_idx = non_system.len().saturating_sub(1);
 
-    let client = Client::new();
+    let initial_messages = build_messages(&non_system, last_idx, images, is_openai, system_prompt);
 
-    let resp = if is_openai_compatible(provider_id) {
-        // ── OpenAI-compatible format ─────────────────────────────────────
-        let mut messages = vec![serde_json::json!({
+    // Tool definitions
+    let tool_defs = if has_tools {
+        if is_openai {
+            Some(chat_tools::openai_tool_definitions())
+        } else {
+            Some(chat_tools::anthropic_tool_definitions())
+        }
+    } else {
+        None
+    };
+
+    // ── Tool execution loop (non-streaming) ──────────────────────────────
+    let mut messages = initial_messages;
+    let mut status_events: Vec<String> = Vec::new();
+    let max_rounds = 10;
+
+    let final_text = 'tool_loop: {
+        for _ in 0..max_rounds {
+            let response = send_non_streaming(
+                &client,
+                is_openai,
+                base_url,
+                api_key,
+                model,
+                system_prompt,
+                &messages,
+                tool_defs.as_deref(),
+            )
+            .await?;
+
+            let tool_calls = chat_tools::extract_tool_calls(&response, is_openai);
+
+            if tool_calls.is_empty() {
+                // No tool calls — this is the final response
+                break 'tool_loop chat_tools::extract_text_content(&response, is_openai);
+            }
+
+            // Append assistant's tool-call message
+            messages.push(chat_tools::format_assistant_tool_message(&response, is_openai));
+
+            // Execute each tool and collect results
+            for tc in &tool_calls {
+                let result = chat_tools::execute_tool(pool, &repos, tc).await;
+                tracing::info!(tool = %tc.name, status = %result.status_line, "Tool executed");
+                status_events.push(result.status_line.clone());
+                messages.push(chat_tools::format_tool_result_message(&result, is_openai));
+            }
+        }
+
+        // Max rounds exceeded — return what we have
+        String::from("I've reached the maximum number of tool calls. Here's what I found so far based on my research.")
+    };
+
+    // ── Stream the response ──────────────────────────────────────────────
+    let pool_clone = pool.clone();
+    let thread_id_owned = thread_id.to_string();
+    let vision_fallback_owned = vision_fallback.cloned();
+
+    let stream = async_stream::stream! {
+        // 1. Emit vision fallback if applicable
+        if let Some(ref fb) = vision_fallback_owned {
+            let sse_event = serde_json::json!({
+                "type": "vision_fallback",
+                "metadata": fb,
+            });
+            yield Ok::<_, std::io::Error>(bytes::Bytes::from(format!("data: {}\n\n", sse_event)));
+        }
+
+        // 2. Emit tool status events
+        for status in &status_events {
+            let sse_event = serde_json::json!({
+                "type": "tool_status",
+                "content": status,
+            });
+            yield Ok::<_, std::io::Error>(bytes::Bytes::from(format!("data: {}\n\n", sse_event)));
+        }
+
+        // 3. Chunk-stream the final text to simulate typing
+        let chunk_size = 50;
+        let mut offset = 0;
+        while offset < final_text.len() {
+            let end = (offset + chunk_size).min(final_text.len());
+            // Don't split in the middle of a multi-byte char
+            let end = if end < final_text.len() {
+                let mut e = end;
+                while e > offset && !final_text.is_char_boundary(e) {
+                    e -= 1;
+                }
+                e
+            } else {
+                end
+            };
+            let chunk = &final_text[offset..end];
+            let sse_event = serde_json::json!({
+                "type": "content_block_delta",
+                "delta": { "text": chunk }
+            });
+            yield Ok::<_, std::io::Error>(bytes::Bytes::from(format!("data: {}\n\n", sse_event)));
+            offset = end;
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+
+        yield Ok(bytes::Bytes::from("data: [DONE]\n\n"));
+
+        // 4. Persist the full assistant message
+        if !final_text.is_empty() {
+            let msg_id = Uuid::new_v4().to_string();
+            let msg_metadata = if !status_events.is_empty() || vision_fallback_owned.is_some() {
+                let mut meta = serde_json::Map::new();
+                if let Some(ref fb) = vision_fallback_owned {
+                    meta.insert("vision_fallback".to_string(), fb.clone());
+                }
+                if !status_events.is_empty() {
+                    meta.insert("tool_calls".to_string(), serde_json::json!(status_events));
+                }
+                Some(serde_json::Value::Object(meta).to_string())
+            } else {
+                None
+            };
+            let _ = sqlx::query(
+                "INSERT INTO chat_messages (id, thread_id, role, content, metadata) VALUES (?, ?, 'assistant', ?, ?)",
+            )
+            .bind(&msg_id)
+            .bind(&thread_id_owned)
+            .bind(&final_text)
+            .bind(&msg_metadata)
+            .execute(&pool_clone)
+            .await;
+        }
+    };
+
+    Ok(Response::builder()
+        .header("content-type", "text/event-stream")
+        .header("cache-control", "no-cache")
+        .header("connection", "keep-alive")
+        .body(Body::from_stream(stream))
+        .unwrap())
+}
+
+/// Build the messages array from conversation history.
+fn build_messages(
+    non_system: &[&ChatMessage],
+    last_idx: usize,
+    images: Option<&[ImageAttachment]>,
+    is_openai: bool,
+    system_prompt: &str,
+) -> Vec<serde_json::Value> {
+    let mut messages = Vec::new();
+
+    if is_openai {
+        messages.push(serde_json::json!({
             "role": "system",
             "content": system_prompt,
-        })];
-        for (i, m) in non_system.iter().enumerate() {
-            let content = if i == last_idx
-                && m.role == "user"
-                && images.map(|imgs| !imgs.is_empty()).unwrap_or(false)
-            {
-                let imgs = images.unwrap();
+        }));
+    }
+
+    for (i, m) in non_system.iter().enumerate() {
+        let has_images =
+            i == last_idx && m.role == "user" && images.map(|imgs| !imgs.is_empty()).unwrap_or(false);
+
+        let content = if has_images {
+            let imgs = images.unwrap();
+            if is_openai {
                 let mut parts: Vec<serde_json::Value> = imgs
                     .iter()
                     .map(|img| {
@@ -818,71 +955,77 @@ async fn chat_completion_provider_api(
                 parts.push(serde_json::json!({"type": "text", "text": m.content}));
                 serde_json::json!(parts)
             } else {
-                serde_json::json!(m.content)
-            };
-            messages.push(serde_json::json!({"role": m.role, "content": content}));
-        }
+                let mut blocks: Vec<serde_json::Value> = imgs
+                    .iter()
+                    .map(|img| {
+                        serde_json::json!({
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": img.mime_type,
+                                "data": img.base64,
+                            }
+                        })
+                    })
+                    .collect();
+                blocks.push(serde_json::json!({"type": "text", "text": m.content}));
+                serde_json::json!(blocks)
+            }
+        } else {
+            serde_json::json!(m.content)
+        };
+        messages.push(serde_json::json!({"role": m.role, "content": content}));
+    }
 
+    messages
+}
+
+/// Send a non-streaming request to the provider and return the parsed JSON response.
+async fn send_non_streaming(
+    client: &Client,
+    is_openai: bool,
+    base_url: &str,
+    api_key: &str,
+    model: &str,
+    system_prompt: &str,
+    messages: &[serde_json::Value],
+    tools: Option<&[serde_json::Value]>,
+) -> Result<serde_json::Value, ApiError> {
+    let resp = if is_openai {
         let url = format!("{}/v1/chat/completions", base_url.trim_end_matches('/'));
+        let mut body = serde_json::json!({
+            "model": model,
+            "max_tokens": 4096,
+            "messages": messages,
+        });
+        if let Some(t) = tools {
+            body["tools"] = serde_json::json!(t);
+        }
         client
             .post(&url)
             .header("Authorization", format!("Bearer {api_key}"))
             .header("content-type", "application/json")
-            .json(&serde_json::json!({
-                "model": model,
-                "max_tokens": 4096,
-                "stream": true,
-                "messages": messages,
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| ApiError::BadRequest(format!("Provider API error: {e}")))?
     } else {
-        // ── Anthropic-compatible format ──────────────────────────────────
-        let messages: Vec<serde_json::Value> = non_system
-            .iter()
-            .enumerate()
-            .map(|(i, m)| {
-                let content = if i == last_idx
-                    && m.role == "user"
-                    && images.map(|imgs| !imgs.is_empty()).unwrap_or(false)
-                {
-                    let imgs = images.unwrap();
-                    let mut blocks: Vec<serde_json::Value> = imgs
-                        .iter()
-                        .map(|img| {
-                            serde_json::json!({
-                                "type": "image",
-                                "source": {
-                                    "type": "base64",
-                                    "media_type": img.mime_type,
-                                    "data": img.base64,
-                                }
-                            })
-                        })
-                        .collect();
-                    blocks.push(serde_json::json!({"type": "text", "text": m.content}));
-                    serde_json::json!(blocks)
-                } else {
-                    serde_json::json!(m.content)
-                };
-                serde_json::json!({"role": m.role, "content": content})
-            })
-            .collect();
-
         let url = format!("{}/v1/messages", base_url.trim_end_matches('/'));
+        let mut body = serde_json::json!({
+            "model": model,
+            "max_tokens": 4096,
+            "system": system_prompt,
+            "messages": messages,
+        });
+        if let Some(t) = tools {
+            body["tools"] = serde_json::json!(t);
+        }
         client
             .post(&url)
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .header("content-type", "application/json")
-            .json(&serde_json::json!({
-                "model": model,
-                "max_tokens": 4096,
-                "stream": true,
-                "system": system_prompt,
-                "messages": messages,
-            }))
+            .json(&body)
             .send()
             .await
             .map_err(|e| ApiError::BadRequest(format!("Anthropic API error: {e}")))?
@@ -899,128 +1042,9 @@ async fn chat_completion_provider_api(
         )));
     }
 
-    let pool_clone = pool.clone();
-    let thread_id_owned = thread_id.to_string();
-    let byte_stream = resp.bytes_stream();
-    let is_openai = is_openai_compatible(provider_id);
-    let vision_fallback_owned = vision_fallback.cloned();
-
-    let stream = async_stream::stream! {
-        let mut full_text = String::new();
-        let mut stream = std::pin::pin!(byte_stream);
-
-        // Emit vision fallback metadata event before content so the frontend
-        // knows which model is actually responding.
-        if let Some(ref fb) = vision_fallback_owned {
-            let sse_event = serde_json::json!({
-                "type": "vision_fallback",
-                "metadata": fb,
-            });
-            let sse_line = format!("data: {}\n\n", sse_event);
-            yield Ok::<_, std::io::Error>(bytes::Bytes::from(sse_line));
-        }
-
-        while let Some(chunk_result) = stream.next().await {
-            let chunk = match chunk_result {
-                Ok(c) => c,
-                Err(e) => {
-                    yield Err(std::io::Error::new(std::io::ErrorKind::Other, e));
-                    break;
-                }
-            };
-
-            let text = String::from_utf8_lossy(&chunk);
-            for line in text.lines() {
-                if let Some(data) = line.strip_prefix("data: ") {
-                    if data == "[DONE]" {
-                        continue;
-                    }
-                    if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                        if is_openai {
-                            // OpenAI format: choices[0].delta.content
-                            if let Some(delta_text) = event
-                                .get("choices")
-                                .and_then(|c| c.get(0))
-                                .and_then(|c| c.get("delta"))
-                                .and_then(|d| d.get("content"))
-                                .and_then(|t| t.as_str())
-                            {
-                                full_text.push_str(delta_text);
-                            }
-                        } else {
-                            // Anthropic format: content_block_delta
-                            if event.get("type").and_then(|t| t.as_str())
-                                == Some("content_block_delta")
-                            {
-                                if let Some(text_delta) = event
-                                    .get("delta")
-                                    .and_then(|d| d.get("text"))
-                                    .and_then(|t| t.as_str())
-                                {
-                                    full_text.push_str(text_delta);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            if is_openai {
-                // Normalize OpenAI SSE to the Anthropic format the frontend expects
-                let text = String::from_utf8_lossy(&chunk);
-                for line in text.lines() {
-                    if let Some(data) = line.strip_prefix("data: ") {
-                        if data == "[DONE]" { continue; }
-                        if let Ok(event) = serde_json::from_str::<serde_json::Value>(data) {
-                            if let Some(delta_text) = event
-                                .get("choices")
-                                .and_then(|c| c.get(0))
-                                .and_then(|c| c.get("delta"))
-                                .and_then(|d| d.get("content"))
-                                .and_then(|t| t.as_str())
-                            {
-                                let sse_event = serde_json::json!({
-                                    "type": "content_block_delta",
-                                    "delta": { "text": delta_text }
-                                });
-                                let sse_line = format!("data: {}\n\n", sse_event);
-                                yield Ok::<_, std::io::Error>(bytes::Bytes::from(sse_line));
-                            }
-                        }
-                    }
-                }
-            } else {
-                // Anthropic format — forward raw SSE bytes
-                yield Ok(chunk);
-            }
-        }
-
-        if is_openai {
-            yield Ok(bytes::Bytes::from("data: [DONE]\n\n"));
-        }
-
-        // Persist the full assistant message (with vision fallback metadata if applicable)
-        if !full_text.is_empty() {
-            let msg_id = Uuid::new_v4().to_string();
-            let msg_metadata = vision_fallback_owned.as_ref().map(|fb| fb.to_string());
-            let _ = sqlx::query(
-                "INSERT INTO chat_messages (id, thread_id, role, content, metadata) VALUES (?, ?, 'assistant', ?, ?)",
-            )
-            .bind(&msg_id)
-            .bind(&thread_id_owned)
-            .bind(&full_text)
-            .bind(&msg_metadata)
-            .execute(&pool_clone)
-            .await;
-        }
-    };
-
-    Ok(Response::builder()
-        .header("content-type", "text/event-stream")
-        .header("cache-control", "no-cache")
-        .header("connection", "keep-alive")
-        .body(Body::from_stream(stream))
-        .unwrap())
+    resp.json::<serde_json::Value>()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("Failed to parse provider response: {e}")))
 }
 
 // ── Read-only query execution ────────────────────────────────────────────────
@@ -1030,7 +1054,7 @@ pub struct ExecuteQueryRequest {
     pub sql: String,
     /// When a crew member executes a query (via chat), pass their id so the
     /// server can enforce the `can_query_database` permission.
-    pub crew_member_id: Option<Uuid>,
+    pub crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

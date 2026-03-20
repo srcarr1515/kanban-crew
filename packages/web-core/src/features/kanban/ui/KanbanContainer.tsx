@@ -66,9 +66,11 @@ import { SearchableTagDropdownContainer } from '@/shared/components/SearchableTa
 import type { IssuePriority } from 'shared/remote-types';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
 import { useAutoCreateWorkspace } from '@/shared/hooks/useAutoCreateWorkspace';
+import { useChatStore } from '@/features/ai-chat/ui/useChatStore';
 import { DefaultRepoDialog } from '@/shared/components/DefaultRepoDialog';
-import { workspacesApi, sessionsApi, configApi } from '@/shared/lib/api';
+import { workspacesApi, sessionsApi, configApi, repoApi } from '@/shared/lib/api';
 import { ApiError } from '@/shared/lib/api';
+import BranchSelector from '@/shared/components/tasks/BranchSelector';
 import { getAutoCreateExecutor } from '@/shared/components/DefaultRepoDialog';
 import { linkWorkspaceToTask, listTaskComments } from '@/shared/lib/local/localApi';
 import type { BaseCodingAgent } from 'shared/types';
@@ -172,9 +174,24 @@ export function KanbanContainer() {
     queryFn: listLocalProjects,
     enabled: IS_LOCAL_MODE,
   });
-  const autoPickupEnabled = IS_LOCAL_MODE
-    ? localProjectsQuery.data?.find((p) => p.id === projectId)?.auto_pickup_enabled ?? false
-    : false;
+  const localProject = IS_LOCAL_MODE
+    ? localProjectsQuery.data?.find((p) => p.id === projectId)
+    : undefined;
+  const autoPickupEnabled = localProject?.auto_pickup_enabled ?? false;
+
+  // Branch selector (local mode only)
+  const defaultRepoId = localProject?.default_repo_id ?? null;
+  const defaultBranch = localProject?.default_branch ?? null;
+  const branchesQuery = useQuery({
+    queryKey: ['repo-branches', defaultRepoId],
+    queryFn: () => repoApi.getBranches(defaultRepoId!),
+    enabled: IS_LOCAL_MODE && !!defaultRepoId,
+    staleTime: 30_000,
+  });
+  const setDefaultBranchMutation = useMutation({
+    mutationFn: (branch: string) => updateLocalProject(projectId, { default_branch: branch }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local', 'projects'] }),
+  });
   const toggleAutoPickupMutation = useMutation({
     mutationFn: (enabled: boolean) => updateLocalProject(projectId, { auto_pickup_enabled: enabled }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local', 'projects'] }),
@@ -828,7 +845,8 @@ export function KanbanContainer() {
           updateIssue(result.subtaskId, { status_id: 'in_progress' });
           const hasWorkspaces =
             getWorkspacesForIssue(result.subtaskId).length > 0;
-          triggerAutoCreate(result.subtaskId, subTask, hasWorkspaces);
+          const subTaskBranch = (subTask?.extension_metadata as Record<string, unknown>)?.branch as string | undefined;
+          triggerAutoCreate(result.subtaskId, subTask, hasWorkspaces, subTaskBranch);
         }
         return true; // handled — don't auto-create for parent
       }
@@ -838,9 +856,8 @@ export function KanbanContainer() {
     [issues, issuesById, updateIssue, getWorkspacesForIssue, triggerAutoCreate, projectId, queryClient, buildSiblingCommentsSection]
   );
 
-  // When a sub-task is dragged to "in_progress", ask whether to reuse the
-  // parent's workspace or create a new one.
-  // Returns true if handled (dialog shown), false to fall through to normal auto-create.
+  // When a sub-task is dragged to "in_progress", auto-reuse the parent's workspace.
+  // Returns true if handled, false to fall through to normal auto-create.
   const triggerSubTaskWorkspace = useCallback(
     async (issueId: string): Promise<boolean> => {
       const issue = issuesById.get(issueId);
@@ -853,27 +870,8 @@ export function KanbanContainer() {
 
       const parentIssue = issuesById.get(issue.parent_issue_id);
 
-      let workspaceName: string;
-      try {
-        const ws = await workspacesApi.get(parentWs.local_workspace_id);
-        workspaceName = ws.name || ws.branch || 'parent workspace';
-      } catch {
-        workspaceName = 'parent workspace';
-      }
-
-      const result = await SubTaskWorkspaceDialog.show({
-        subTaskTitle: issue.title,
-        parentTitle: parentIssue?.title ?? 'Parent task',
-        parentWorkspaceName: workspaceName,
-      });
-
-      if (result === 'cancel') {
-        // Revert to previous status
-        updateIssue(issueId, { status_id: issue.status_id });
-        return true;
-      }
-
-      if (result === 'reuse') {
+      // Auto-reuse the parent workspace for sub-tasks without prompting
+      {
         const parentWsId = parentWs.local_workspace_id;
         try {
           await linkWorkspaceToTask(issueId, parentWsId);
@@ -963,9 +961,6 @@ export function KanbanContainer() {
         }
         return true;
       }
-
-      // result === 'new' — fall through to normal auto-create
-      return false;
     },
     [issuesById, getWorkspacesForIssue, updateIssue, projectId, queryClient, buildSiblingCommentsSection]
   );
@@ -1315,13 +1310,52 @@ export function KanbanContainer() {
     [getWorkspacesForIssue, issues, issuesById, localWorkspacesById, queryClient, performMerge]
   );
 
+  const { setDraggingIssueId } = useChatStore();
+  const lastMousePos = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Track mouse position during drag so we can hit-test against the chat panel
+  const handleDragStart = useCallback(
+    (start: { draggableId: string }) => {
+      setDraggingIssueId(start.draggableId);
+      const onMouseMove = (e: MouseEvent) => {
+        lastMousePos.current = { x: e.clientX, y: e.clientY };
+      };
+      const onMouseUp = () => {
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    },
+    [setDraggingIssueId]
+  );
+
   // Simple onDragEnd handler - the library handles all visual movement
   const handleDragEnd = useCallback(
     (result: DropResult) => {
+      setDraggingIssueId(null);
       const { source, destination } = result;
 
-      // Dropped outside a valid droppable
-      if (!destination) return;
+      // Dropped outside a valid droppable — check if it landed on the chat panel
+      if (!destination) {
+        const chatEl = useChatStore.getState().chatPanelRef;
+        if (chatEl) {
+          const rect = chatEl.getBoundingClientRect();
+          const { x, y } = lastMousePos.current;
+          if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+            const issue = issuesById.get(result.draggableId);
+            if (issue) {
+              useChatStore.getState().attachTicket({
+                id: issue.id,
+                title: issue.title,
+                description: issue.description,
+                status: issue.status_id,
+              });
+            }
+          }
+        }
+        return;
+      }
 
       // No movement
       if (
@@ -1451,7 +1485,8 @@ export function KanbanContainer() {
                   const issue = issuesById.get(id);
                   const hasWorkspaces =
                     getWorkspacesForIssue(id).length > 0;
-                  triggerAutoCreate(id, issue, hasWorkspaces);
+                  const taskBranch = (issue?.extension_metadata as Record<string, unknown>)?.branch as string | undefined;
+                  triggerAutoCreate(id, issue, hasWorkspaces, taskBranch);
                 });
               });
             }
@@ -1629,6 +1664,14 @@ export function KanbanContainer() {
             isMobile ? 'flex-col' : 'flex-wrap'
           )}
         >
+          {IS_LOCAL_MODE && defaultRepoId && (
+            <BranchSelector
+              branches={branchesQuery.data ?? []}
+              selectedBranch={defaultBranch}
+              onBranchSelect={(branch) => setDefaultBranchMutation.mutate(branch)}
+              className="w-48"
+            />
+          )}
           <ViewNavTabs
             activeView={kanbanViewMode}
             onViewChange={setKanbanViewMode}
@@ -1676,7 +1719,7 @@ export function KanbanContainer() {
           </div>
         ) : (
           <div className="flex-1 overflow-x-auto px-double">
-            <KanbanProvider onDragEnd={handleDragEnd}>
+            <KanbanProvider onDragEnd={handleDragEnd} onDragStart={handleDragStart}>
               {visibleStatuses.map((status) => {
                 const issueIds = items[status.id] ?? [];
 

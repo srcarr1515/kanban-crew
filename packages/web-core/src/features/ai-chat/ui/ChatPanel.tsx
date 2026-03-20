@@ -26,7 +26,7 @@ import {
   type ChatThread,
   type VisionFallbackInfo,
 } from '@/shared/lib/local/chatApi';
-import { listCrewMembers } from '@/shared/lib/local/localApi';
+import { listCrewMembers, listLocalTasks } from '@/shared/lib/local/localApi';
 import {
   ChatToolbar,
   type ChatToolbarCrewMemberProps,
@@ -38,7 +38,7 @@ import { useChatStore } from './useChatStore';
 export function ChatPanel() {
   const { projectId } = useProjectContext();
   const queryClient = useQueryClient();
-  const { activeThreadId, setActiveThread, close, isFullscreen, toggleFullscreen } = useChatStore();
+  const { activeThreadId, setActiveThread, close, isFullscreen, toggleFullscreen, attachedTickets, attachTicket, detachTicket, clearAttachedTickets, draggingIssueId, setDraggingIssueId, setChatPanelRef } = useChatStore();
   const [input, setInput] = useState('');
   const [streamingContent, setStreamingContent] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
@@ -49,6 +49,7 @@ export function ChatPanel() {
   const [isDragOver, setIsDragOver] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [visionFallback, setVisionFallback] = useState<VisionFallbackInfo | null>(null);
+  const [toolStatus, setToolStatus] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
 
@@ -57,6 +58,13 @@ export function ChatPanel() {
     queryKey: ['local', 'crew-members'],
     queryFn: listCrewMembers,
     staleTime: 30_000,
+  });
+
+  // ── Local tasks (for ticket drag-to-chat lookup) ────────────────
+  const { data: localTasks = [] } = useQuery({
+    queryKey: ['local', 'tasks', projectId],
+    queryFn: () => listLocalTasks(projectId),
+    staleTime: 10_000,
   });
 
   // ── Threads ──────────────────────────────────────────────────────
@@ -185,7 +193,16 @@ export function ChatPanel() {
   // ── Send message ─────────────────────────────────────────────────
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if ((!text && attachments.length === 0) || !activeThreadId || isStreaming) return;
+    if ((!text && attachments.length === 0 && attachedTickets.length === 0) || !activeThreadId || isStreaming) return;
+
+    // Build the effective prompt: prepend ticket context if tickets are attached
+    let effectiveText = text;
+    if (attachedTickets.length > 0) {
+      const ticketContext = attachedTickets
+        .map((t) => `[Attached Ticket: ${t.title} (${t.id.slice(0, 8)}) — status: ${t.status}${t.description ? `\nDescription: ${t.description}` : ''}]`)
+        .join('\n');
+      effectiveText = ticketContext + (text ? `\n\n${text}` : '');
+    }
 
     const chatAttachments: ChatAttachment[] = attachments.map((a) => ({
       base64: a.dataUrl.split(',')[1],
@@ -197,12 +214,14 @@ export function ChatPanel() {
 
     setInput('');
     setAttachments([]);
+    clearAttachedTickets();
     setOptimisticText(text || '\u200b'); // zero-width space keeps bubble visible
     setOptimisticImages(optimisticImgs);
     setIsStreaming(true);
     setStreamingContent('');
     setErrorMessage(null);
     setVisionFallback(null);
+    setToolStatus(null);
     abortRef.current = false;
 
     // Check before streaming so we capture the pre-send state
@@ -211,13 +230,17 @@ export function ChatPanel() {
 
     try {
       let accumulated = '';
-      for await (const chunk of streamChatCompletion(activeThreadId, text || ' ', selectedCrewId, chatAttachments)) {
+      for await (const chunk of streamChatCompletion(activeThreadId, effectiveText || ' ', selectedCrewId, chatAttachments)) {
         if (abortRef.current) break;
         if (chunk.type === 'text') {
+          // Clear tool status once text starts arriving
+          setToolStatus(null);
           accumulated += chunk.text;
           setStreamingContent(accumulated);
         } else if (chunk.type === 'vision_fallback') {
           setVisionFallback(chunk.info);
+        } else if (chunk.type === 'tool_status') {
+          setToolStatus(chunk.content);
         }
       }
     } catch (err) {
@@ -229,6 +252,7 @@ export function ChatPanel() {
     } finally {
       setIsStreaming(false);
       setStreamingContent('');
+      setToolStatus(null);
       setOptimisticText(null);
       setOptimisticImages([]);
       // Refresh messages to get the persisted user + assistant messages
@@ -252,7 +276,7 @@ export function ChatPanel() {
         }
       }
     }
-  }, [input, attachments, activeThreadId, isStreaming, selectedCrewId, queryClient, threads, crewMembers, projectId]);
+  }, [input, attachments, attachedTickets, clearAttachedTickets, activeThreadId, isStreaming, selectedCrewId, queryClient, threads, crewMembers, projectId]);
 
   const activeThread = threads.find((t) => t.id === activeThreadId);
   const isCrewLocked = !!activeThread?.crew_member_id;
@@ -284,6 +308,7 @@ export function ChatPanel() {
 
   return (
     <div
+      ref={useCallback((el: HTMLDivElement | null) => setChatPanelRef(el), [setChatPanelRef])}
       className="relative flex flex-col h-full bg-primary"
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
@@ -364,6 +389,14 @@ export function ChatPanel() {
             }}
           />
         )}
+        {isStreaming && toolStatus && !streamingContent && (
+          <div className="flex gap-2.5 px-3 py-2">
+            <div className="shrink-0 flex items-center justify-center size-7" />
+            <div className="text-xs text-muted-foreground animate-pulse">
+              {toolStatus}
+            </div>
+          </div>
+        )}
         {isStreaming && <StreamingMessage content={streamingContent} crewMember={lockedCrewMember} />}
         <div ref={messagesEndRef} />
       </div>
@@ -431,6 +464,38 @@ export function ChatPanel() {
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Attached ticket pills */}
+      {attachedTickets.length > 0 && (
+        <div className="shrink-0 border-t px-3 pt-2 flex flex-wrap gap-1.5">
+          {attachedTickets.map((ticket) => (
+            <button
+              key={ticket.id}
+              type="button"
+              onClick={() => detachTicket(ticket.id)}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-brand/15 text-brand border border-brand/30 hover:bg-red-500/15 hover:text-red-500 hover:border-red-500/30 transition-colors"
+              title={`${ticket.title} — click to remove`}
+            >
+              <span className="font-mono">{ticket.id.slice(0, 8)}</span>
+              <XIcon className="size-3" />
+            </button>
+          ))}
+        </div>
+      )}
+
+      {/* Drop zone overlay when dragging a kanban card */}
+      {draggingIssueId && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center bg-brand/10 border-2 border-dashed border-brand rounded-xl cursor-copy"
+          onMouseUp={() => {
+            // Attachment is handled by KanbanContainer's handleDragEnd via hit-testing
+          }}
+        >
+          <span className="text-brand font-medium text-sm pointer-events-none">
+            Drop ticket to attach
+          </span>
         </div>
       )}
 

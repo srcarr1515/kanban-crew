@@ -15,6 +15,7 @@ export interface LocalTask {
   parent_task_id: string | null;
   parent_task_sort_order: number | null;
   crew_member_id: string | null;
+  branch: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -45,7 +46,7 @@ export function taskToIssue(task: LocalTask): Issue {
     sort_order: task.sort_order,
     parent_issue_id: task.parent_task_id,
     parent_issue_sort_order: task.parent_task_sort_order,
-    extension_metadata: {},
+    extension_metadata: { branch: task.branch ?? undefined },
     creator_user_id: null,
     created_at: task.created_at,
     updated_at: task.updated_at,

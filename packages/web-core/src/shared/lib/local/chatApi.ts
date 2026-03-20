@@ -192,7 +192,8 @@ export function listChatMessages(threadId: string): Promise<ChatMessage[]> {
 
 export type StreamChunk =
   | { type: 'text'; text: string }
-  | { type: 'vision_fallback'; info: VisionFallbackInfo };
+  | { type: 'vision_fallback'; info: VisionFallbackInfo }
+  | { type: 'tool_status'; content: string };
 
 /**
  * Send a message and stream the assistant response.
@@ -245,6 +246,8 @@ export async function* streamChatCompletion(
             type: 'vision_fallback',
             info: event.metadata as VisionFallbackInfo,
           };
+        } else if (event.type === 'tool_status' && event.content) {
+          yield { type: 'tool_status', content: event.content as string };
         }
       } catch {
         // Skip non-JSON lines
@@ -272,22 +275,67 @@ function normalizeTicket(raw: unknown): ProposalTicket | null {
   };
 }
 
+/**
+ * Attempt to repair common AI JSON mistakes (unbalanced brackets/braces).
+ * Tries to fix missing ] and } at the end of the string.
+ */
+function tryRepairJson(raw: string): unknown | null {
+  // First try as-is
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // ignore
+  }
+
+  // Count unbalanced brackets/braces and try appending closers
+  let brackets = 0;
+  let braces = 0;
+  let inString = false;
+  let escape = false;
+  for (const ch of raw) {
+    if (escape) { escape = false; continue; }
+    if (ch === '\\') { escape = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '[') brackets++;
+    else if (ch === ']') brackets--;
+    else if (ch === '{') braces++;
+    else if (ch === '}') braces--;
+  }
+
+  if (brackets >= 0 && braces >= 0) {
+    const repaired = raw + ']'.repeat(brackets) + '}'.repeat(braces);
+    try {
+      return JSON.parse(repaired);
+    } catch {
+      // ignore
+    }
+    // Try the other order (braces then brackets)
+    const repaired2 = raw + '}'.repeat(braces) + ']'.repeat(brackets);
+    try {
+      return JSON.parse(repaired2);
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
 /** Extract and normalize proposal blocks from an assistant message. */
 export function extractProposals(content: string): Proposal[] {
   const proposals: Proposal[] = [];
   let match;
   while ((match = PROPOSAL_REGEX.exec(content)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      if (!Array.isArray(parsed.tickets)) continue;
-      const tickets = parsed.tickets
-        .map(normalizeTicket)
-        .filter(Boolean) as ProposalTicket[];
-      if (tickets.length > 0) {
-        proposals.push({ tickets });
-      }
-    } catch {
-      // malformed JSON, skip
+    const parsed = tryRepairJson(match[1]);
+    if (!parsed || typeof parsed !== 'object') continue;
+    const obj = parsed as Record<string, unknown>;
+    if (!Array.isArray(obj.tickets)) continue;
+    const tickets = obj.tickets
+      .map(normalizeTicket)
+      .filter(Boolean) as ProposalTicket[];
+    if (tickets.length > 0) {
+      proposals.push({ tickets });
     }
   }
   return proposals;
@@ -300,20 +348,18 @@ export function extractModifyProposals(content: string): ModifyProposal[] {
   const proposals: ModifyProposal[] = [];
   let match;
   while ((match = MODIFY_PROPOSAL_REGEX.exec(content)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      if (!Array.isArray(parsed.modifications)) continue;
-      const modifications = parsed.modifications.filter(
-        (m: unknown) =>
-          m &&
-          typeof m === 'object' &&
-          typeof (m as Record<string, unknown>).task_id === 'string'
-      ) as ModifyProposalItem[];
-      if (modifications.length > 0) {
-        proposals.push({ modifications });
-      }
-    } catch {
-      // malformed JSON, skip
+    const parsed = tryRepairJson(match[1]);
+    if (!parsed || typeof parsed !== 'object') continue;
+    const obj = parsed as Record<string, unknown>;
+    if (!Array.isArray(obj.modifications)) continue;
+    const modifications = obj.modifications.filter(
+      (m: unknown) =>
+        m &&
+        typeof m === 'object' &&
+        typeof (m as Record<string, unknown>).task_id === 'string'
+    ) as ModifyProposalItem[];
+    if (modifications.length > 0) {
+      proposals.push({ modifications });
     }
   }
   return proposals;
@@ -398,20 +444,18 @@ export function extractDeleteProposals(content: string): DeleteProposal[] {
   const proposals: DeleteProposal[] = [];
   let match;
   while ((match = DELETE_PROPOSAL_REGEX.exec(content)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      if (!Array.isArray(parsed.deletions)) continue;
-      const deletions = parsed.deletions.filter(
-        (d: unknown) =>
-          d &&
-          typeof d === 'object' &&
-          typeof (d as Record<string, unknown>).task_id === 'string'
-      ) as DeleteProposalItem[];
-      if (deletions.length > 0) {
-        proposals.push({ deletions });
-      }
-    } catch {
-      // malformed JSON, skip
+    const parsed = tryRepairJson(match[1]);
+    if (!parsed || typeof parsed !== 'object') continue;
+    const obj = parsed as Record<string, unknown>;
+    if (!Array.isArray(obj.deletions)) continue;
+    const deletions = obj.deletions.filter(
+      (d: unknown) =>
+        d &&
+        typeof d === 'object' &&
+        typeof (d as Record<string, unknown>).task_id === 'string'
+    ) as DeleteProposalItem[];
+    if (deletions.length > 0) {
+      proposals.push({ deletions });
     }
   }
   return proposals;

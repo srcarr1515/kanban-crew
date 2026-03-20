@@ -11,6 +11,8 @@ pub struct Project {
     pub default_agent_working_dir: Option<String>,
     pub remote_project_id: Option<Uuid>,
     pub auto_pickup_enabled: bool,
+    pub default_repo_id: Option<Uuid>,
+    pub default_branch: Option<String>,
     #[ts(type = "Date")]
     pub created_at: DateTime<Utc>,
     #[ts(type = "Date")]
@@ -21,7 +23,7 @@ impl Project {
     pub async fn find_all(pool: &SqlitePool) -> Result<Vec<Self>, sqlx::Error> {
         sqlx::query_as::<_, Project>(
             r#"SELECT id, name, default_agent_working_dir, remote_project_id,
-                      auto_pickup_enabled, created_at, updated_at
+                      auto_pickup_enabled, default_repo_id, default_branch, created_at, updated_at
                FROM projects
                ORDER BY created_at DESC"#,
         )
@@ -32,7 +34,7 @@ impl Project {
     pub async fn find_by_id(pool: &SqlitePool, id: Uuid) -> Result<Option<Self>, sqlx::Error> {
         sqlx::query_as::<_, Project>(
             r#"SELECT id, name, default_agent_working_dir, remote_project_id,
-                      auto_pickup_enabled, created_at, updated_at
+                      auto_pickup_enabled, default_repo_id, default_branch, created_at, updated_at
                FROM projects
                WHERE id = ?"#,
         )

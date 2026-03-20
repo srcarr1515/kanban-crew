@@ -18,7 +18,7 @@ use crate::{DeploymentImpl, error::ApiError};
 /// Returns `Ok(())` when no crew member is specified or the member has the permission.
 async fn check_propose_permission(
     pool: &sqlx::SqlitePool,
-    crew_member_id: Option<Uuid>,
+    crew_member_id: Option<&str>,
 ) -> Result<(), ApiError> {
     let Some(member_id) = crew_member_id else {
         return Ok(());
@@ -48,6 +48,7 @@ where
 
 pub mod artifacts;
 pub mod chat;
+pub mod chat_tools;
 pub mod crew_member_skills;
 pub mod crew_members;
 pub mod skills;
@@ -67,6 +68,7 @@ pub struct LocalTask {
     pub parent_task_id: Option<Uuid>,
     pub parent_task_sort_order: Option<f64>,
     pub crew_member_id: Option<String>,
+    pub branch: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -93,9 +95,10 @@ pub struct CreateTaskRequest {
     pub parent_task_id: Option<Uuid>,
     pub parent_task_sort_order: Option<f64>,
     pub crew_member_id: Option<String>,
+    pub branch: Option<String>,
     /// When a crew member is proposing this task (via chat proposal), pass their
     /// id here so the server can enforce the `can_propose_tasks` permission.
-    pub proposing_crew_member_id: Option<Uuid>,
+    pub proposing_crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,9 +114,11 @@ pub struct UpdateTaskRequest {
     pub parent_task_sort_order: Option<Option<f64>>,
     #[serde(default, deserialize_with = "some_if_present")]
     pub crew_member_id: Option<Option<String>>,
+    #[serde(default, deserialize_with = "some_if_present")]
+    pub branch: Option<Option<String>>,
     /// When a crew member is modifying this task (via chat proposal), pass their
     /// id here so the server can enforce the `can_propose_tasks` permission.
-    pub proposing_crew_member_id: Option<Uuid>,
+    pub proposing_crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,12 +136,14 @@ pub struct BulkUpdateRequest {
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteTaskQuery {
-    pub proposing_crew_member_id: Option<Uuid>,
+    pub proposing_crew_member_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateProjectRequest {
     pub auto_pickup_enabled: Option<bool>,
+    pub default_repo_id: Option<Option<Uuid>>,
+    pub default_branch: Option<Option<String>>,
 }
 
 // ── Router ───────────────────────────────────────────────────────────────────
@@ -185,15 +192,49 @@ async fn create_project(
     let pool = &deployment.db().pool;
     let id = Uuid::new_v4();
 
-    let project = sqlx::query_as::<_, Project>(
-        r#"INSERT INTO projects (id, name)
-           VALUES (?, ?)
-           RETURNING id, name, default_agent_working_dir, remote_project_id, auto_pickup_enabled, created_at, updated_at"#,
+    sqlx::query(
+        "INSERT INTO projects (id, name) VALUES (?, ?)",
     )
     .bind(id)
     .bind(&request.name)
-    .fetch_one(pool)
+    .execute(pool)
     .await?;
+
+    // Auto-link repo if exactly one exists globally
+    let all_repos: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+        "SELECT id, default_target_branch FROM repos",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    if all_repos.len() == 1 {
+        let (repo_id, default_branch) = &all_repos[0];
+        let branch = default_branch.as_deref().unwrap_or("main");
+
+        // Link repo to project
+        sqlx::query(
+            "INSERT INTO project_repos (id, project_id, repo_id) VALUES (?, ?, ?)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(id)
+        .bind(repo_id)
+        .execute(pool)
+        .await?;
+
+        // Set as default on project
+        sqlx::query(
+            "UPDATE projects SET default_repo_id = ?, default_branch = ? WHERE id = ?",
+        )
+        .bind(repo_id)
+        .bind(branch)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+
+    let project = Project::find_by_id(pool, id)
+        .await?
+        .ok_or_else(|| ApiError::BadRequest("Project not found after creation".to_string()))?;
 
     Ok(ResponseJson(ApiResponse::success(project)))
 }
@@ -207,6 +248,26 @@ async fn update_project(
 
     if let Some(enabled) = request.auto_pickup_enabled {
         Project::set_auto_pickup_enabled(pool, id, enabled).await?;
+    }
+
+    if let Some(ref repo_id) = request.default_repo_id {
+        sqlx::query(
+            "UPDATE projects SET default_repo_id = ?, updated_at = datetime('now', 'subsec') WHERE id = ?",
+        )
+        .bind(repo_id)
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+
+    if let Some(ref branch) = request.default_branch {
+        sqlx::query(
+            "UPDATE projects SET default_branch = ?, updated_at = datetime('now', 'subsec') WHERE id = ?",
+        )
+        .bind(branch)
+        .bind(id)
+        .execute(pool)
+        .await?;
     }
 
     let project = Project::find_by_id(pool, id)
@@ -224,7 +285,7 @@ async fn list_tasks(
 
     let tasks = sqlx::query_as::<_, LocalTask>(
         r#"SELECT id, project_id, title, description, status, sort_order,
-                  parent_task_id, parent_task_sort_order, crew_member_id,
+                  parent_task_id, parent_task_sort_order, crew_member_id, branch,
                   created_at, updated_at
            FROM tasks
            WHERE project_id = ?
@@ -243,17 +304,17 @@ async fn create_task(
 ) -> Result<ResponseJson<ApiResponse<LocalTask>>, ApiError> {
     let pool = &deployment.db().pool;
 
-    check_propose_permission(pool, request.proposing_crew_member_id).await?;
+    check_propose_permission(pool, request.proposing_crew_member_id.as_deref()).await?;
 
     let id = Uuid::new_v4();
     let status = request.status.unwrap_or_else(|| "todo".to_string());
     let sort_order = request.sort_order.unwrap_or(0);
 
     let task = sqlx::query_as::<_, LocalTask>(
-        r#"INSERT INTO tasks (id, project_id, title, description, status, sort_order, parent_task_id, parent_task_sort_order, crew_member_id)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        r#"INSERT INTO tasks (id, project_id, title, description, status, sort_order, parent_task_id, parent_task_sort_order, crew_member_id, branch)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
            RETURNING id, project_id, title, description, status, sort_order,
-                     parent_task_id, parent_task_sort_order, crew_member_id,
+                     parent_task_id, parent_task_sort_order, crew_member_id, branch,
                      created_at, updated_at"#,
     )
     .bind(id)
@@ -265,6 +326,7 @@ async fn create_task(
     .bind(request.parent_task_id)
     .bind(request.parent_task_sort_order)
     .bind(&request.crew_member_id)
+    .bind(&request.branch)
     .fetch_one(pool)
     .await?;
 
@@ -278,7 +340,7 @@ async fn update_task(
 ) -> Result<ResponseJson<ApiResponse<LocalTask>>, ApiError> {
     let pool = &deployment.db().pool;
 
-    check_propose_permission(pool, request.proposing_crew_member_id).await?;
+    check_propose_permission(pool, request.proposing_crew_member_id.as_deref()).await?;
 
     // Build dynamic update — only update provided fields
     let task = sqlx::query_as::<_, LocalTask>(
@@ -290,10 +352,11 @@ async fn update_task(
                parent_task_id       = CASE WHEN ? THEN ? ELSE parent_task_id END,
                parent_task_sort_order = CASE WHEN ? THEN ? ELSE parent_task_sort_order END,
                crew_member_id       = CASE WHEN ? THEN ? ELSE crew_member_id END,
+               branch               = CASE WHEN ? THEN ? ELSE branch END,
                updated_at           = datetime('now', 'subsec')
            WHERE id = ?
            RETURNING id, project_id, title, description, status, sort_order,
-                     parent_task_id, parent_task_sort_order, crew_member_id,
+                     parent_task_id, parent_task_sort_order, crew_member_id, branch,
                      created_at, updated_at"#,
     )
     .bind(&request.title)
@@ -307,6 +370,8 @@ async fn update_task(
     .bind(request.parent_task_sort_order.unwrap_or(None))
     .bind(request.crew_member_id.is_some())
     .bind(request.crew_member_id.as_ref().and_then(|v| v.as_deref()))
+    .bind(request.branch.is_some())
+    .bind(request.branch.as_ref().and_then(|v| v.as_deref()))
     .bind(id)
     .fetch_optional(pool)
     .await?
@@ -322,7 +387,7 @@ async fn delete_task(
 ) -> Result<ResponseJson<ApiResponse<()>>, ApiError> {
     let pool = &deployment.db().pool;
 
-    check_propose_permission(pool, query.proposing_crew_member_id).await?;
+    check_propose_permission(pool, query.proposing_crew_member_id.as_deref()).await?;
 
     sqlx::query("DELETE FROM tasks WHERE id = ?")
         .bind(id)

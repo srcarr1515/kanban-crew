@@ -253,16 +253,18 @@ export const KanbanHeader = (props: KanbanHeaderProps) => {
 export type KanbanProviderProps = {
   children: ReactNode;
   onDragEnd: (result: DropResult) => void;
+  onDragStart?: (start: { draggableId: string; source: { droppableId: string; index: number } }) => void;
   className?: string;
 };
 
 export const KanbanProvider = ({
   children,
   onDragEnd,
+  onDragStart,
   className,
 }: KanbanProviderProps) => {
   return (
-    <DragDropContext onDragEnd={onDragEnd}>
+    <DragDropContext onDragEnd={onDragEnd} onDragStart={onDragStart}>
       <div
         className={cn(
           'inline-grid grid-flow-col auto-cols-[minmax(200px,400px)] divide-x border-x items-stretch min-h-full',

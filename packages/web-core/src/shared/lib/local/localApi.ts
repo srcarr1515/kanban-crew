@@ -32,6 +32,8 @@ export interface LocalProject {
   default_agent_working_dir: string | null;
   remote_project_id: string | null;
   auto_pickup_enabled: boolean;
+  default_repo_id: string | null;
+  default_branch: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -51,7 +53,11 @@ export function createLocalProject(name: string): Promise<LocalProject> {
 
 export function updateLocalProject(
   id: string,
-  changes: { auto_pickup_enabled?: boolean }
+  changes: {
+    auto_pickup_enabled?: boolean;
+    default_repo_id?: string | null;
+    default_branch?: string | null;
+  }
 ): Promise<LocalProject> {
   return localFetch<LocalProject>(`/api/local/projects/${id}`, {
     method: 'PATCH',
@@ -76,6 +82,7 @@ export function createLocalTask(data: {
   parent_task_id?: string | null;
   parent_task_sort_order?: number | null;
   crew_member_id?: string | null;
+  branch?: string | null;
   proposing_crew_member_id?: string | null;
 }): Promise<LocalTask> {
   return localFetch<LocalTask>('/api/local/tasks', {
@@ -94,6 +101,7 @@ export function updateLocalTask(
     parent_task_id?: string | null;
     parent_task_sort_order?: number | null;
     crew_member_id?: string | null;
+    branch?: string | null;
     proposing_crew_member_id?: string | null;
   }
 ): Promise<LocalTask> {
