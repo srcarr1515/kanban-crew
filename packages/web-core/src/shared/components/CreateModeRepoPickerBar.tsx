@@ -131,6 +131,19 @@ export function CreateModeRepoPickerBar({
     []
   );
 
+  const persistDefaultBranch = useCallback(
+    async (repoId: string, branch: string) => {
+      try {
+        await repoApi.update(repoId, { default_target_branch: branch });
+        queryClient.invalidateQueries({ queryKey: ['repos'] });
+      } catch {
+        // Best-effort: the workspace draft already has the branch, so the
+        // user can still continue even if the repo update fails.
+      }
+    },
+    [queryClient]
+  );
+
   const addRepoWithBranchSelection = useCallback(
     async (repo: Repo) => {
       if (selectedRepoIds.has(repo.id)) {
@@ -143,9 +156,10 @@ export function CreateModeRepoPickerBar({
 
       addRepo(repo);
       setTargetBranch(repo.id, selectedBranch);
+      void persistDefaultBranch(repo.id, selectedBranch);
       return true;
     },
-    [addRepo, pickBranchForRepo, selectedRepoIds, setTargetBranch]
+    [addRepo, persistDefaultBranch, pickBranchForRepo, selectedRepoIds, setTargetBranch]
   );
 
   const handleChooseRepo = useCallback(async () => {
@@ -236,11 +250,12 @@ export function CreateModeRepoPickerBar({
           const selectedBranch = await pickBranchForRepo(repo);
           if (!selectedBranch) return;
           setTargetBranch(repo.id, selectedBranch);
+          void persistDefaultBranch(repo.id, selectedBranch);
         },
         'Failed to load branches'
       );
     },
-    [pickBranchForRepo, runPickerAction, setTargetBranch]
+    [persistDefaultBranch, pickBranchForRepo, runPickerAction, setTargetBranch]
   );
 
   return (

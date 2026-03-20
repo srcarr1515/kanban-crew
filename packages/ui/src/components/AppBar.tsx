@@ -49,7 +49,7 @@ interface AppBarProps {
   projectsLabel?: string;
   onPairHostClick?: () => void;
   activeHostId?: string | null;
-  onCreateProject: () => void;
+  onCreateProject?: () => void;
   onWorkspacesClick: () => void;
   onHostClick?: (hostId: string, status: AppBarHostStatus) => void;
   showWorkspacesButton?: boolean;
@@ -368,7 +368,7 @@ export function AppBar({
       </DragDropContext>
 
       {/* Create project button */}
-      {isSignedIn && (
+      {isSignedIn && onCreateProject && (
         <Tooltip content="Create project" side="right">
           <button
             type="button"

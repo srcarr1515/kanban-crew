@@ -62,6 +62,8 @@ import {
   listLocalProjects,
   createLocalProject,
 } from '@/shared/lib/local/localApi';
+import { repoApi } from '@/shared/lib/api';
+import { hasRepoWithBranch } from '@/shared/lib/guards/repoBranchGuard';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 export function SharedAppLayout() {
@@ -171,6 +173,13 @@ export function SharedAppLayout() {
       })),
     [localProjectsRaw]
   );
+
+  // Repo guard: hide project creation until a repo with a branch exists
+  const { data: repos = [] } = useQuery({
+    queryKey: ['repos'],
+    queryFn: () => repoApi.list(),
+  });
+  const hasRepoAndBranch = hasRepoWithBranch(repos);
 
   const effectiveProjects = IS_LOCAL_MODE ? localProjects : orgProjects;
   const isLoading = IS_LOCAL_MODE ? localLoading : remoteLoading;
@@ -385,7 +394,7 @@ export function SharedAppLayout() {
             {/* Row 2, col 1: AppBar sidebar */}
             <AppBar
               projects={orderedProjects}
-              onCreateProject={handleCreateProject}
+              onCreateProject={hasRepoAndBranch ? handleCreateProject : undefined}
               onWorkspacesClick={handleWorkspacesClick}
               onProjectClick={handleProjectClick}
               onProjectsDragEnd={handleProjectsDragEnd}
@@ -588,7 +597,7 @@ export function SharedAppLayout() {
             </div>
 
             {/* Create Project button */}
-            {isSignedIn && (
+            {isSignedIn && hasRepoAndBranch && (
               <div className="p-3 border-t border-border">
                 <button
                   type="button"
