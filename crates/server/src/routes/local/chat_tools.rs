@@ -21,6 +21,9 @@ pub struct ToolResult {
     pub content: String,
     /// Human-readable 1-liner for the frontend status indicator.
     pub status_line: String,
+    /// If set, this tool call should be emitted as an SSE event to the frontend
+    /// rather than just shown as a status line. The value is the SSE event JSON.
+    pub sse_event: Option<serde_json::Value>,
 }
 
 // ── Tool definitions ─────────────────────────────────────────────────────────
@@ -85,6 +88,76 @@ pub fn anthropic_tool_definitions() -> Vec<serde_json::Value> {
                     "sql": { "type": "string", "description": "The SQL query to execute" }
                 },
                 "required": ["sql"]
+            }
+        }),
+        serde_json::json!({
+            "name": "propose_tickets",
+            "description": "Propose new tickets for the user to review and approve. The user will see an interactive card with the proposal and can accept, edit, or dismiss it. You MUST use this tool (not inline JSON) whenever you want to create tickets.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "tickets": {
+                        "type": "array",
+                        "description": "Array of ticket objects to propose",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "title": { "type": "string", "description": "Concise ticket title, under 80 characters" },
+                                "description": { "type": "string", "description": "Structured description with ## What and ## Implementation Notes sections" },
+                                "status": { "type": "string", "description": "Ticket status, usually 'todo'" },
+                                "files_affected": { "type": "array", "items": { "type": "string" }, "description": "File paths that need modification" },
+                                "acceptance_criteria": { "type": "array", "items": { "type": "string" }, "description": "Testable conditions that define done" },
+                                "subtasks": { "type": "array", "items": { "type": "object" }, "description": "Optional child tickets with the same structure" }
+                            },
+                            "required": ["title", "description", "status", "files_affected", "acceptance_criteria"]
+                        }
+                    }
+                },
+                "required": ["tickets"]
+            }
+        }),
+        serde_json::json!({
+            "name": "modify_tickets",
+            "description": "Propose modifications to existing tickets. The user will see a confirmation card before changes are applied.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "modifications": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": { "type": "string", "description": "The ID of the task to modify (from Current Tasks list)" },
+                                "title": { "type": "string" },
+                                "description": { "type": "string" },
+                                "status": { "type": "string" }
+                            },
+                            "required": ["task_id"]
+                        }
+                    }
+                },
+                "required": ["modifications"]
+            }
+        }),
+        serde_json::json!({
+            "name": "delete_tickets",
+            "description": "Propose deletion of existing tickets. The user will see a confirmation card before deletions are applied.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "deletions": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "task_id": { "type": "string", "description": "The ID of the task to delete" },
+                                "title": { "type": "string", "description": "Task title for confirmation display" }
+                            },
+                            "required": ["task_id", "title"]
+                        }
+                    }
+                },
+                "required": ["deletions"]
             }
         }),
     ]
@@ -183,6 +256,44 @@ pub async fn execute_tool(
     let input = &tool_call.input;
     let repo_name = input.get("repo_name").and_then(|v| v.as_str());
 
+    // Proposal tools: pass input through as SSE events, don't execute server-side
+    match tool_call.name.as_str() {
+        "propose_tickets" => {
+            return ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: "Proposal shown to user for review.".to_string(),
+                status_line: "Proposing tickets...".to_string(),
+                sse_event: Some(serde_json::json!({
+                    "type": "proposal",
+                    "data": { "tickets": input.get("tickets").cloned().unwrap_or(serde_json::json!([])) }
+                })),
+            };
+        }
+        "modify_tickets" => {
+            return ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: "Modification proposal shown to user for review.".to_string(),
+                status_line: "Proposing modifications...".to_string(),
+                sse_event: Some(serde_json::json!({
+                    "type": "modify_proposal",
+                    "data": { "modifications": input.get("modifications").cloned().unwrap_or(serde_json::json!([])) }
+                })),
+            };
+        }
+        "delete_tickets" => {
+            return ToolResult {
+                tool_call_id: tool_call.id.clone(),
+                content: "Deletion proposal shown to user for review.".to_string(),
+                status_line: "Proposing deletions...".to_string(),
+                sse_event: Some(serde_json::json!({
+                    "type": "delete_proposal",
+                    "data": { "deletions": input.get("deletions").cloned().unwrap_or(serde_json::json!([])) }
+                })),
+            };
+        }
+        _ => {}
+    }
+
     let (content, status_line) = match tool_call.name.as_str() {
         "read_file" => exec_read_file(repos, input, repo_name),
         "search_files" => exec_search_files(repos, input, repo_name).await,
@@ -196,6 +307,7 @@ pub async fn execute_tool(
         tool_call_id: tool_call.id.clone(),
         content,
         status_line,
+        sse_event: None,
     }
 }
 

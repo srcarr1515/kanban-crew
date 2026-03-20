@@ -806,6 +806,7 @@ async fn chat_completion_provider_api(
     // ── Tool execution loop (non-streaming) ──────────────────────────────
     let mut messages = initial_messages;
     let mut status_events: Vec<String> = Vec::new();
+    let mut proposal_events: Vec<serde_json::Value> = Vec::new();
     let max_rounds = 50;
 
     let final_text = 'tool_loop: {
@@ -837,6 +838,9 @@ async fn chat_completion_provider_api(
                 let result = chat_tools::execute_tool(pool, &repos, tc).await;
                 tracing::info!(tool = %tc.name, status = %result.status_line, "Tool executed");
                 status_events.push(result.status_line.clone());
+                if let Some(event) = &result.sse_event {
+                    proposal_events.push(event.clone());
+                }
                 messages.push(chat_tools::format_tool_result_message(&result, is_openai));
             }
         }
@@ -867,6 +871,11 @@ async fn chat_completion_provider_api(
                 "content": status,
             });
             yield Ok::<_, std::io::Error>(bytes::Bytes::from(format!("data: {}\n\n", sse_event)));
+        }
+
+        // 3. Emit proposal/modify/delete events
+        for event in &proposal_events {
+            yield Ok::<_, std::io::Error>(bytes::Bytes::from(format!("data: {}\n\n", event)));
         }
 
         // 3. Chunk-stream the final text to simulate typing

@@ -94,7 +94,7 @@ export function ChatMessageBubble({ message, crewMember }: ChatMessageProps) {
   const displayContent = useMemo(() => {
     if (!hasSpecialBlocks) return message.content;
     return message.content
-      .replace(/```(?:proposal|modify_proposal|delete_proposal|query|artifact)\n[\s\S]*?\n```/g, '')
+      .replace(/```(?:proposal|modify_proposal|delete_proposal|query|artifact)\s*\n[\s\S]*?```/g, '')
       .trim();
   }, [message.content, hasSpecialBlocks]);
 
@@ -216,7 +216,7 @@ export function StreamingMessage({ content, crewMember }: StreamingMessageProps)
   const hasSpecialBlocks = proposals.length > 0 || modifyProposals.length > 0 || deleteProposals.length > 0 || queryBlocks.length > 0 || artifactBlocks.length > 0;
   const displayContent = useMemo(() => {
     if (!hasSpecialBlocks) return content;
-    return content.replace(/```(?:proposal|modify_proposal|delete_proposal|query|artifact)\n[\s\S]*?\n```/g, '').trim();
+    return content.replace(/```(?:proposal|modify_proposal|delete_proposal|query|artifact)\s*\n[\s\S]*?```/g, '').trim();
   }, [content, hasSpecialBlocks]);
 
   return (

@@ -26,6 +26,9 @@ import {
   type ChatAttachment,
   type ChatThread,
   type VisionFallbackInfo,
+  type Proposal,
+  type ModifyProposal,
+  type DeleteProposal,
 } from '@/shared/lib/local/chatApi';
 import { listCrewMembers, listLocalTasks } from '@/shared/lib/local/localApi';
 import {
@@ -34,6 +37,9 @@ import {
   type ChatToolbarFileUploadProps,
 } from '@vibe/ui/components/ChatToolbar';
 import { ChatMessageBubble, StreamingMessage } from './ChatMessage';
+import { ProposalCard } from './ProposalCard';
+import { ModifyProposalCard } from './ModifyProposalCard';
+import { DeleteProposalCard } from './DeleteProposalCard';
 import { useChatStore } from './useChatStore';
 
 export function ChatPanel() {
@@ -51,6 +57,9 @@ export function ChatPanel() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [visionFallback, setVisionFallback] = useState<VisionFallbackInfo | null>(null);
   const [toolStatus, setToolStatus] = useState<string | null>(null);
+  const [streamingProposals, setStreamingProposals] = useState<Proposal[]>([]);
+  const [streamingModifyProposals, setStreamingModifyProposals] = useState<ModifyProposal[]>([]);
+  const [streamingDeleteProposals, setStreamingDeleteProposals] = useState<DeleteProposal[]>([]);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef(false);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -229,6 +238,9 @@ export function ChatPanel() {
     setErrorMessage(null);
     setVisionFallback(null);
     setToolStatus(null);
+    setStreamingProposals([]);
+    setStreamingModifyProposals([]);
+    setStreamingDeleteProposals([]);
     abortRef.current = false;
     const controller = new AbortController();
     abortControllerRef.current = controller;
@@ -250,6 +262,12 @@ export function ChatPanel() {
           setVisionFallback(chunk.info);
         } else if (chunk.type === 'tool_status') {
           setToolStatus(chunk.content);
+        } else if (chunk.type === 'proposal') {
+          setStreamingProposals((prev) => [...prev, chunk.data]);
+        } else if (chunk.type === 'modify_proposal') {
+          setStreamingModifyProposals((prev) => [...prev, chunk.data]);
+        } else if (chunk.type === 'delete_proposal') {
+          setStreamingDeleteProposals((prev) => [...prev, chunk.data]);
         }
       }
     } catch (err) {
@@ -413,6 +431,15 @@ export function ChatPanel() {
           </div>
         )}
         {isStreaming && <StreamingMessage content={streamingContent} crewMember={lockedCrewMember} />}
+        {streamingProposals.map((p, i) => (
+          <ProposalCard key={`sp-${i}`} proposal={p} crewMemberId={selectedCrewId ?? undefined} />
+        ))}
+        {streamingModifyProposals.map((p, i) => (
+          <ModifyProposalCard key={`smp-${i}`} proposal={p} crewMemberId={selectedCrewId ?? undefined} />
+        ))}
+        {streamingDeleteProposals.map((p, i) => (
+          <DeleteProposalCard key={`sdp-${i}`} proposal={p} crewMemberId={selectedCrewId ?? undefined} />
+        ))}
         <div ref={messagesEndRef} />
       </div>
 

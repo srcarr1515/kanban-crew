@@ -214,7 +214,10 @@ export function listChatMessages(threadId: string): Promise<ChatMessage[]> {
 export type StreamChunk =
   | { type: 'text'; text: string }
   | { type: 'vision_fallback'; info: VisionFallbackInfo }
-  | { type: 'tool_status'; content: string };
+  | { type: 'tool_status'; content: string }
+  | { type: 'proposal'; data: Proposal }
+  | { type: 'modify_proposal'; data: ModifyProposal }
+  | { type: 'delete_proposal'; data: DeleteProposal };
 
 /**
  * Send a message and stream the assistant response.
@@ -271,6 +274,12 @@ export async function* streamChatCompletion(
           };
         } else if (event.type === 'tool_status' && event.content) {
           yield { type: 'tool_status', content: event.content as string };
+        } else if (event.type === 'proposal' && event.data) {
+          yield { type: 'proposal', data: event.data as Proposal };
+        } else if (event.type === 'modify_proposal' && event.data) {
+          yield { type: 'modify_proposal', data: event.data as ModifyProposal };
+        } else if (event.type === 'delete_proposal' && event.data) {
+          yield { type: 'delete_proposal', data: event.data as DeleteProposal };
         }
       } catch {
         // Skip non-JSON lines
@@ -281,7 +290,7 @@ export async function* streamChatCompletion(
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
-const PROPOSAL_REGEX = /```proposal\n([\s\S]*?)\n```/g;
+const PROPOSAL_REGEX = /```proposal\s*\n([\s\S]*?)```/g;
 
 /** Normalize a raw parsed object into a ProposalTicket, returning null if invalid. */
 function normalizeTicket(raw: unknown): ProposalTicket | null {
@@ -370,7 +379,7 @@ export function extractProposals(content: string): Proposal[] {
   return proposals;
 }
 
-const MODIFY_PROPOSAL_REGEX = /```modify_proposal\n([\s\S]*?)\n```/g;
+const MODIFY_PROPOSAL_REGEX = /```modify_proposal\s*\n([\s\S]*?)```/g;
 
 /** Extract modify-proposal blocks from an assistant message. */
 export function extractModifyProposals(content: string): ModifyProposal[] {
@@ -466,7 +475,7 @@ export function extractArtifacts(content: string): ArtifactBlock[] {
   return artifacts;
 }
 
-const DELETE_PROPOSAL_REGEX = /```delete_proposal\n([\s\S]*?)\n```/g;
+const DELETE_PROPOSAL_REGEX = /```delete_proposal\s*\n([\s\S]*?)```/g;
 
 /** Extract delete-proposal blocks from an assistant message. */
 export function extractDeleteProposals(content: string): DeleteProposal[] {
