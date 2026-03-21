@@ -28,68 +28,9 @@ pub struct ToolResult {
 
 // ── Tool definitions ─────────────────────────────────────────────────────────
 
-pub fn anthropic_tool_definitions() -> Vec<serde_json::Value> {
+/// Ticket management tools — always available regardless of repo configuration
+pub fn ticket_tool_definitions() -> Vec<serde_json::Value> {
     vec![
-        serde_json::json!({
-            "name": "read_file",
-            "description": "Read the contents of a file from one of the project's repositories. Returns the file text (capped at 100KB).",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Relative path from repo root, e.g. src/main.rs" },
-                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
-                },
-                "required": ["path"]
-            }
-        }),
-        serde_json::json!({
-            "name": "search_files",
-            "description": "Search for files whose path contains the query string. Returns up to 50 matching paths.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "query": { "type": "string", "description": "Search term — file name, partial path, or extension (e.g. '.tsx')" },
-                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
-                },
-                "required": ["query"]
-            }
-        }),
-        serde_json::json!({
-            "name": "grep_codebase",
-            "description": "Search file contents for a text pattern (case-insensitive substring match). Returns up to 30 matching lines with file paths and line numbers.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "pattern": { "type": "string", "description": "Text pattern to search for in file contents" },
-                    "file_glob": { "type": "string", "description": "Optional glob to limit search, e.g. '*.rs' or 'src/**/*.ts'" },
-                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
-                },
-                "required": ["pattern"]
-            }
-        }),
-        serde_json::json!({
-            "name": "list_directory",
-            "description": "List the contents of a directory in one of the project's repositories. Returns file and directory names.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "path": { "type": "string", "description": "Relative directory path from repo root. Use '.' or '' for root." },
-                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
-                },
-                "required": ["path"]
-            }
-        }),
-        serde_json::json!({
-            "name": "query_database",
-            "description": "Execute a read-only SQL query against the project database. Only SELECT/WITH/EXPLAIN allowed. Max 500 rows returned.",
-            "input_schema": {
-                "type": "object",
-                "properties": {
-                    "sql": { "type": "string", "description": "The SQL query to execute" }
-                },
-                "required": ["sql"]
-            }
-        }),
         serde_json::json!({
             "name": "propose_tickets",
             "description": "Propose new tickets for the user to review and approve. The user will see an interactive card with the proposal and can accept, edit, or dismiss it. You MUST use this tool (not inline JSON) whenever you want to create tickets.",
@@ -163,8 +104,83 @@ pub fn anthropic_tool_definitions() -> Vec<serde_json::Value> {
     ]
 }
 
-pub fn openai_tool_definitions() -> Vec<serde_json::Value> {
-    anthropic_tool_definitions()
+/// Codebase exploration tools — only available when project has repos configured
+pub fn codebase_tool_definitions() -> Vec<serde_json::Value> {
+    vec![
+        serde_json::json!({
+            "name": "read_file",
+            "description": "Read the contents of a file from one of the project's repositories. Returns the file text (capped at 100KB).",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative path from repo root, e.g. src/main.rs" },
+                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
+                },
+                "required": ["path"]
+            }
+        }),
+        serde_json::json!({
+            "name": "search_files",
+            "description": "Search for files whose path contains the query string. Returns up to 50 matching paths.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search term — file name, partial path, or extension (e.g. '.tsx')" },
+                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
+                },
+                "required": ["query"]
+            }
+        }),
+        serde_json::json!({
+            "name": "grep_codebase",
+            "description": "Search file contents for a text pattern (case-insensitive substring match). Returns up to 30 matching lines with file paths and line numbers.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "pattern": { "type": "string", "description": "Text pattern to search for in file contents" },
+                    "file_glob": { "type": "string", "description": "Optional glob to limit search, e.g. '*.rs' or 'src/**/*.ts'" },
+                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
+                },
+                "required": ["pattern"]
+            }
+        }),
+        serde_json::json!({
+            "name": "list_directory",
+            "description": "List the contents of a directory in one of the project's repositories. Returns file and directory names.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "path": { "type": "string", "description": "Relative directory path from repo root. Use '.' or '' for root." },
+                    "repo_name": { "type": "string", "description": "Repository name. Omit if the project has only one repo." }
+                },
+                "required": ["path"]
+            }
+        }),
+        serde_json::json!({
+            "name": "query_database",
+            "description": "Execute a read-only SQL query against the project database. Only SELECT/WITH/EXPLAIN allowed. Max 500 rows returned.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "sql": { "type": "string", "description": "The SQL query to execute" }
+                },
+                "required": ["sql"]
+            }
+        }),
+    ]
+}
+
+/// All Anthropic-format tool definitions (ticket tools + codebase tools if repos available)
+pub fn anthropic_tool_definitions(include_codebase: bool) -> Vec<serde_json::Value> {
+    let mut tools = ticket_tool_definitions();
+    if include_codebase {
+        tools.extend(codebase_tool_definitions());
+    }
+    tools
+}
+
+pub fn openai_tool_definitions(include_codebase: bool) -> Vec<serde_json::Value> {
+    anthropic_tool_definitions(include_codebase)
         .into_iter()
         .map(|tool| {
             serde_json::json!({

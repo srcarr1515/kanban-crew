@@ -264,18 +264,17 @@ pub async fn try_select_next_task(
             .flatten();
 
     let candidate_tasks = if let Some(parent_id) = parent_task_id {
-        // Completed task IS a subtask — check if parent is fully completed
+        // Completed task IS a subtask — check for ready siblings
         let ready_siblings = find_ready_subtasks(pool, parent_id).await?;
 
         if !ready_siblings.is_empty() {
-            // Parent not yet fully completed — do NOT auto-pick during subtask work
+            // Siblings remain — pick the next one
             tracing::debug!(
-                "Auto-pickup: {} ready sibling(s) remain under parent {parent_id}, skipping",
+                "Auto-pickup: {} ready sibling(s) remain under parent {parent_id}, picking next",
                 ready_siblings.len()
             );
-            return Ok(None);
-        }
-
+            ready_siblings
+        } else {
         // Parent fully completed (no ready siblings) — agent-filtered search
         let completing_agent = get_crew_member_id(pool, workspace_task_id).await?;
         tracing::debug!(
@@ -290,6 +289,7 @@ pub async fn try_select_next_task(
         }
 
         filtered
+        }
     } else {
         // Completed task is NOT a subtask — existing priority logic
         // Priority 1: Check for ready child sub-tasks
@@ -395,12 +395,19 @@ async fn get_crew_member_id(
     pool: &sqlx::SqlitePool,
     task_id: Uuid,
 ) -> Result<Option<String>, AutoPickupError> {
-    sqlx::query_scalar("SELECT crew_member_id FROM tasks WHERE id = ?")
-        .bind(task_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(AutoPickupError::Db)?
-        .ok_or(AutoPickupError::TaskNotFound(task_id))
+    // Returns Option<Option<String>>:
+    //   None = task not found, Some(None) = unassigned, Some(Some(id)) = assigned
+    let result: Option<Option<String>> =
+        sqlx::query_scalar("SELECT crew_member_id FROM tasks WHERE id = ?")
+            .bind(task_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(AutoPickupError::Db)?;
+
+    match result {
+        None => Err(AutoPickupError::TaskNotFound(task_id)),
+        Some(inner) => Ok(inner),
+    }
 }
 
 /// Find ready top-level tasks (no parent) assigned to the given agent or unassigned.
@@ -630,7 +637,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn subtask_completion_with_siblings_remaining_does_not_trigger() {
+    async fn subtask_completion_with_siblings_remaining_picks_next_sibling() {
         let db = setup_db().await;
         let pool = &db.pool;
 
@@ -646,12 +653,13 @@ mod tests {
 
         insert_task(pool, parent_id, project_id, "in_progress", None, Some(&agent_id)).await;
         insert_task(pool, done_subtask_id, project_id, "done", Some(parent_id), Some(&agent_id)).await;
-        // A sibling subtask still in "ready" — parent not fully complete
+        // A sibling subtask still in "ready" — should be picked next
         insert_task(pool, ready_sibling_id, project_id, "ready", Some(parent_id), Some(&agent_id)).await;
-        // An unrelated ready ticket
+        // An unrelated ready ticket — should NOT be picked (sibling takes priority)
         insert_task(pool, unrelated_ready_id, project_id, "ready", None, Some(&agent_id)).await;
 
         let result = try_select_next_task(&db, done_subtask_id).await.unwrap();
-        assert!(result.is_none(), "should NOT auto-pick when sibling subtasks remain");
+        assert!(result.is_some(), "should auto-pick the next ready sibling");
+        assert_eq!(result.unwrap().selected_task_id, ready_sibling_id);
     }
 }

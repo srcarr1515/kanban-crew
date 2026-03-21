@@ -61,7 +61,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
+  DropdownMenuSeparator,
 } from '@vibe/ui/components/Dropdown';
+import { FolderGit, Check } from 'lucide-react';
 import { SearchableTagDropdownContainer } from '@/shared/components/SearchableTagDropdownContainer';
 import type { IssuePriority } from 'shared/remote-types';
 import { IS_LOCAL_MODE } from '@/shared/lib/local/isLocalMode';
@@ -189,6 +191,16 @@ export function KanbanContainer() {
   });
   const setDefaultBranchMutation = useMutation({
     mutationFn: (branch: string) => updateLocalProject(projectId, { default_branch: branch }),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local', 'projects'] }),
+  });
+  const reposQuery = useQuery({
+    queryKey: ['repos'],
+    queryFn: () => repoApi.list(),
+    enabled: IS_LOCAL_MODE,
+  });
+  const setDefaultRepoMutation = useMutation({
+    mutationFn: (repoId: string) =>
+      updateLocalProject(projectId, { default_repo_id: repoId, default_branch: null }),
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ['local', 'projects'] }),
   });
   const toggleAutoPickupMutation = useMutation({
@@ -1667,13 +1679,52 @@ export function KanbanContainer() {
             isMobile ? 'flex-col' : 'flex-wrap'
           )}
         >
-          {IS_LOCAL_MODE && defaultRepoId && (
-            <BranchSelector
-              branches={branchesQuery.data ?? []}
-              selectedBranch={defaultBranch}
-              onBranchSelect={(branch) => setDefaultBranchMutation.mutate(branch)}
-              className="w-48"
-            />
+          {IS_LOCAL_MODE && (
+            <div className="flex items-center gap-1">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <button
+                    className="inline-flex items-center justify-center rounded-md border border-input bg-background px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                    aria-label="Select repository"
+                  >
+                    <FolderGit className="h-3.5 w-3.5" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-64">
+                  {(reposQuery.data ?? []).length === 0 ? (
+                    <>
+                      <div className="p-2 text-sm text-muted-foreground text-center">
+                        No repos linked
+                      </div>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem onSelect={() => setIsDefaultRepoOpen(true)}>
+                        Add repo
+                      </DropdownMenuItem>
+                    </>
+                  ) : (
+                    (reposQuery.data ?? []).map((repo) => (
+                      <DropdownMenuItem
+                        key={repo.id}
+                        onSelect={() => setDefaultRepoMutation.mutate(repo.id)}
+                      >
+                        <div className="flex items-center justify-between w-full gap-2">
+                          <span className="truncate">{repo.display_name || repo.name}</span>
+                          {defaultRepoId === repo.id && <Check className="h-4 w-4 flex-shrink-0" />}
+                        </div>
+                      </DropdownMenuItem>
+                    ))
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+              {defaultRepoId && (
+                <BranchSelector
+                  branches={branchesQuery.data ?? []}
+                  selectedBranch={defaultBranch}
+                  onBranchSelect={(branch) => setDefaultBranchMutation.mutate(branch)}
+                  className="w-48"
+                />
+              )}
+            </div>
           )}
           <ViewNavTabs
             activeView={kanbanViewMode}

@@ -784,7 +784,7 @@ async fn chat_completion_provider_api(
     } else {
         Vec::new()
     };
-    let has_tools = !repos.is_empty();
+    let has_codebase_tools = !repos.is_empty();
 
     // Build initial messages array from history
     let non_system: Vec<&ChatMessage> = history.iter().filter(|m| m.role != "system").collect();
@@ -792,15 +792,11 @@ async fn chat_completion_provider_api(
 
     let initial_messages = build_messages(&non_system, last_idx, images, is_openai, system_prompt);
 
-    // Tool definitions
-    let tool_defs = if has_tools {
-        if is_openai {
-            Some(chat_tools::openai_tool_definitions())
-        } else {
-            Some(chat_tools::anthropic_tool_definitions())
-        }
+    // Tool definitions — ticket tools are always available, codebase tools require repos
+    let tool_defs = if is_openai {
+        Some(chat_tools::openai_tool_definitions(has_codebase_tools))
     } else {
-        None
+        Some(chat_tools::anthropic_tool_definitions(has_codebase_tools))
     };
 
     // ── Tool execution loop (non-streaming) ──────────────────────────────
